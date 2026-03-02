@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+tests/
+*zip
+*.tar.gz
+*.egg-info/
+dist/
+build/
+*.egg
+*.log
+.DS_Store
+.env
+venv/
+.env/
+.idea/
+financeGard/

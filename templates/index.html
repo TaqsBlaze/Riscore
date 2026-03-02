@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full" x-data>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinanceGuard | Risk Check</title>
+  <script src="[[url_for('static', filename='js/tailwind.js') ]]"></script>
+  <script src="[[url_for('static', filename='js/vue3.js') ]]"></script>
+  <script src="../static/js/tailwind.js"></script>
+  <script src="../static/js/vue3.js"></script>
+  <script src="../static/js/axios.min.js"></script>"
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            fg: '#0A0A0A',
+            bg: '#FAFAFA',
+            muted: '#6B7280',
+            border: '#E5E7EB',
+            accent: '#111827'
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="h-full bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+  <div id="app" class="min-h-full">
+    <header class="border-b border-neutral-200/70 dark:border-neutral-800">
+      <div class="mx-auto flex w-full max-w-4xl items-center justify-between px-6 py-5">
+        <div>
+          <div class="text-sm uppercase tracking-[0.25em] text-neutral-500">FinanceGuard</div>
+          <h1 class="text-xl font-semibold">Risk Check</h1>
+        </div>
+        <button
+          @click="toggleTheme"
+          class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700"
+        >
+          [[ themeLabel ]]
+        </button>
+      </div>
+    </header>
+
+    <main class="mx-auto w-full max-w-4xl px-6 py-10">
+      <div class="grid gap-8 md:grid-cols-[1.1fr_0.9fr]">
+        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 class="text-base font-semibold">Application Form</h2>
+          <p class="mt-1 text-sm text-neutral-500">Provide your details to receive a risk score.</p>
+
+          <div class="mt-6 space-y-4">
+            <div>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Full name</label>
+              <input v-model="form.name" type="text" placeholder="e.g. Jane Doe"
+                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            </div>
+            <div>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Loan amount requested (USD)</label>
+              <input v-model.number="form.amount" type="number" placeholder="5000"
+                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            </div>
+            <div>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Income verification</label>
+              <div class="mt-2 flex rounded-xl border border-neutral-200 bg-neutral-50 p-1 dark:border-neutral-800 dark:bg-neutral-950">
+                <button class="flex-1 rounded-lg px-3 py-2 text-xs font-semibold"
+                        :class="inputMode === 'manual' ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900' : 'text-neutral-500'"
+                        @click="inputMode = 'manual'">Manual</button>
+                <button class="flex-1 rounded-lg px-3 py-2 text-xs font-semibold"
+                        :class="inputMode === 'upload' ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900' : 'text-neutral-500'"
+                        @click="inputMode = 'upload'">Payslip</button>
+              </div>
+            </div>
+            <div v-if="inputMode === 'manual'">
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Monthly net income (USD)</label>
+              <input v-model.number="form.income" type="number" placeholder="2500"
+                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            </div>
+            <div v-else>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Payslip upload</label>
+              <div class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
+                <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">Choose file</button>
+                <div class="mt-2 text-xs" v-if="selectedFile">Selected: [[selectedFile.name ]]</div>
+                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden" accept=".pdf,image/*" />
+              </div>
+            </div>
+
+            <button
+              class="mt-2 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              :disabled="isAssessing || !isFormValid"
+              @click="runAssessment"
+            >
+              [[isAssessing ? 'Analyzing...' : 'Apply' ]]
+            </button>
+
+            <p v-if="errorMessage" class="text-sm text-red-500">[[errorMessage ]]</p>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 class="text-base font-semibold">Risk Score</h2>
+          <p class="mt-1 text-sm text-neutral-500">Your result appears after assessment.</p>
+
+          <div class="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 p-5 dark:border-neutral-800 dark:bg-neutral-950">
+            <div class="text-4xl font-semibold" v-if="riskScore !== null">[[riskScore.toFixed(1)]]</div>
+            <div class="text-4xl font-semibold text-neutral-400" v-else>--</div>
+            <div class="mt-2 text-xs uppercase tracking-[0.2em] text-neutral-500">Risk score (0-100)</div>
+
+            <div class="mt-5">
+              <div class="flex items-center justify-between text-xs font-medium text-neutral-500">
+                <span>Low</span>
+                <span>High</span>
+              </div>
+              <div class="mt-2 h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800">
+                <div class="h-2 rounded-full" :style="{ width: riskScore + '%', background: riskColor }"></div>
+              </div>
+              <div class="mt-3 text-sm font-semibold" :class="riskClass" v-if="riskLabel">[[riskLabel]] risk</div>
+              <div class="mt-3 text-sm text-neutral-400" v-else>Awaiting assessment.</div>
+            </div>
+          </div>
+
+          <div class="mt-6 text-xs text-neutral-500">
+            By submitting, you agree to FinanceGuard's risk assessment policy.
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const { createApp, ref, reactive, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const inputMode = ref('manual');
+        const selectedFile = ref(null);
+        const isAssessing = ref(false);
+        const errorMessage = ref('');
+        const riskScore = ref(null);
+        const riskLabel = ref('');
+        const theme = ref('light');
+
+        const form = reactive({
+          name: '',
+          amount: null,
+          income: null
+        });
+
+        const isFormValid = computed(() => {
+          const basicInfo = form.name.trim().length > 2 && form.amount > 0;
+          if (inputMode.value === 'manual') {
+            return basicInfo && form.income > 0;
+          }
+          return basicInfo && selectedFile.value !== null;
+        });
+
+        const handleFileUpload = (e) => {
+          const file = e.target.files[0];
+          if (file) {
+            selectedFile.value = file;
+            form.income = Math.floor(Math.random() * (8000 - 2000) + 2000);
+          }
+        };
+
+        const runAssessment = async () => {
+          isAssessing.value = true;
+          errorMessage.value = '';
+
+          try {
+            const nameParts = form.name.trim().split(/\s+/);
+            const firstName = nameParts[0] || '';
+            const lastName = nameParts.slice(1).join(' ');
+
+            const payload = {
+              first_name: firstName,
+              last_name: lastName,
+              salary: form.income
+            };
+
+            const { data } = await axios.post('http://localhost:5000/api/assess', payload, {
+              headers: { 'Content-Type': 'application/json' }
+            });
+
+            riskScore.value = data.risk_score;
+            riskLabel.value = data.risk_label;
+          } catch (err) {
+            errorMessage.value = err?.response?.data?.error || 'Unable to process assessment.';
+          } finally {
+            isAssessing.value = false;
+          }
+        };
+
+        const riskClass = computed(() => {
+          if (riskLabel.value === 'High') return 'text-red-500';
+          if (riskLabel.value === 'Medium') return 'text-amber-500';
+          return 'text-emerald-500';
+        });
+
+        const riskColor = computed(() => {
+          if (riskLabel.value === 'High') return '#ef4444';
+          if (riskLabel.value === 'Medium') return '#f59e0b';
+          return '#10b981';
+        });
+
+        const toggleTheme = () => {
+          theme.value = theme.value === 'light' ? 'dark' : 'light';
+          document.documentElement.classList.toggle('dark', theme.value === 'dark');
+          localStorage.setItem('theme', theme.value);
+        };
+
+        const themeLabel = computed(() => theme.value === 'light' ? 'Dark mode' : 'Light mode');
+
+        onMounted(() => {
+          const saved = localStorage.getItem('theme');
+          if (saved) {
+            theme.value = saved;
+            document.documentElement.classList.toggle('dark', theme.value === 'dark');
+          }
+        });
+
+        return {
+          inputMode,
+          selectedFile,
+          isAssessing,
+          errorMessage,
+          riskScore,
+          riskLabel,
+          form,
+          isFormValid,
+          handleFileUpload,
+          runAssessment,
+          riskClass,
+          riskColor,
+          toggleTheme,
+          themeLabel
+        };
+      },
+      delimiters: ['[[', ']]']
+    }).mount('#app');
+  </script>
+</body>
+</html>
