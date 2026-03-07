@@ -1,4 +1,4 @@
-from financeGard import db
+from financeGuard import db
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean,

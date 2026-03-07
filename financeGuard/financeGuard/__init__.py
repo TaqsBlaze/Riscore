@@ -66,4 +66,4 @@ app.app_context()
 db = SQLAlchemy(app)
 migrate = Migrate(app, db, render_as_batch = True)
 
-from financeGard.api import endpoints
+from financeGuard.api import endpoints

@@ -1,6 +1,6 @@
-from financeGard import app
-from financeGard.api import log
-from financeGard.api.endpoints import ensure_db_ready
+from financeGuard import app
+from financeGuard.api import log
+from financeGuard.api.endpoints import ensure_db_ready
 import os, asyncio, random, datetime, pickle, re, uuid, logging
 
 if __name__ == '__main__':

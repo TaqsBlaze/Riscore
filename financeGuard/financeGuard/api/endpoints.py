@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from flask import jsonify, render_template, request, url_for
-from financeGard.auth.token import token_required
-from financeGard import app, db
+from financeGuard.auth.token import token_required
+from financeGuard import app, db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean,
@@ -10,8 +10,8 @@ from sqlalchemy import (
 )
 import os, asyncio, random, datetime, pickle, re, uuid, logging
 from concurrent.futures import ThreadPoolExecutor
-from financeGard.api import AsyncSessionFactory, init_db, log
-from financeGard.models.models import BlacklistedUser, Borrower, User, Alert, Transaction
+from financeGuard.api import AsyncSessionFactory, init_db, log
+from financeGuard.models.models import BlacklistedUser, Borrower, User, Alert, Transaction
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:

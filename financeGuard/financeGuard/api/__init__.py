@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from financeGard import app, db
+from financeGuard import app, db
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
