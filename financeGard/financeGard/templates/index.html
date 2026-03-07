@@ -4,14 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FinanceGuard | Risk Check</title>
-  <script src="[[url_for('static', filename='js/tailwind.js') ]]"></script>
-  <script src="[[url_for('static', filename='js/vue3.js') ]]"></script>
-  <script src="../static/js/tailwind.js"></script>
-  <script src="../static/js/vue3.js"></script>
-  <script src="../static/js/axios.min.js"></script>"
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="{{ url_for('static', filename='js/tailwind.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/vue3.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/axios.min.js') }}"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -32,7 +27,7 @@
 <body class="h-full bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
   <div id="app" class="min-h-full">
     <header class="border-b border-neutral-200/70 dark:border-neutral-800">
-      <div class="mx-auto flex w-full max-w-4xl items-center justify-between px-6 py-5">
+      <div class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
         <div>
           <div class="text-sm uppercase tracking-[0.25em] text-neutral-500">FinanceGuard</div>
           <h1 class="text-xl font-semibold">Risk Check</h1>
@@ -46,8 +41,8 @@
       </div>
     </header>
 
-    <main class="mx-auto w-full max-w-4xl px-6 py-10">
-      <div class="grid gap-8 md:grid-cols-[1.1fr_0.9fr]">
+    <main class="mx-auto w-full max-w-6xl px-6 py-10">
+      <div class="grid gap-6 lg:grid-cols-3">
         <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 class="text-base font-semibold">Application Form</h2>
           <p class="mt-1 text-sm text-neutral-500">Provide your details to receive a risk score.</p>
@@ -64,30 +59,17 @@
                      class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
             </div>
             <div>
-              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Income verification</label>
-              <div class="mt-2 flex rounded-xl border border-neutral-200 bg-neutral-50 p-1 dark:border-neutral-800 dark:bg-neutral-950">
-                <button class="flex-1 rounded-lg px-3 py-2 text-xs font-semibold"
-                        :class="inputMode === 'manual' ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900' : 'text-neutral-500'"
-                        @click="inputMode = 'manual'">Manual</button>
-                <button class="flex-1 rounded-lg px-3 py-2 text-xs font-semibold"
-                        :class="inputMode === 'upload' ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900' : 'text-neutral-500'"
-                        @click="inputMode = 'upload'">Payslip</button>
-              </div>
-            </div>
-            <div v-if="inputMode === 'manual'">
-              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Monthly net income (USD)</label>
-              <input v-model.number="form.income" type="number" placeholder="2500"
-                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
-            </div>
-            <div v-else>
               <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Payslip upload</label>
               <div class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
-                <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">Choose file</button>
+                <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">Upload payslip</button>
                 <div class="mt-2 text-xs" v-if="selectedFile">Selected: [[selectedFile.name ]]</div>
-                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden" accept=".pdf,image/*" />
+                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden" accept=".pdf,.txt,.png,.jpg,.jpeg" />
               </div>
+              <p class="mt-2 text-xs text-neutral-400">We extract monthly pay information straight from your payslip.</p>
             </div>
-
+            <div v-if="form.salary">
+              <p class="text-sm font-semibold text-emerald-600">Detected salary: $[[ form.salary.toFixed(2) ]]</p>
+            </div>
             <button
               class="mt-2 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
               :disabled="isAssessing || !isFormValid"
@@ -125,6 +107,49 @@
           <div class="mt-6 text-xs text-neutral-500">
             By submitting, you agree to FinanceGuard's risk assessment policy.
           </div>
+
+          <div class="mt-6 space-y-4">
+            <div v-if="trackingNumber" class="rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-sm dark:border-neutral-700">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-xs text-neutral-500">Your tracking number</p>
+                  <p class="text-lg font-semibold">[[ trackingNumber ]]</p>
+                </div>
+                <button class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-semibold" @click="copyTrackingNumber">Copy</button>
+              </div>
+              <p class="mt-2 text-xs text-neutral-400">Copy and save this number for future status inquiries.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 class="text-base font-semibold">Application Status</h2>
+          <p class="mt-1 text-sm text-neutral-500">Track a submission using your tracking number.</p>
+
+          <div class="mt-6 space-y-3">
+            <input v-model="statusLookup.tracking" type="text" placeholder="Tracking number"
+                   class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            <button
+              class="w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              :disabled="!statusLookup.tracking"
+              @click="lookupStatus"
+            >Check status</button>
+
+            <p v-if="statusLookup.error" class="text-xs text-red-500">[[ statusLookup.error ]]</p>
+
+            <div v-if="statusLookup.result" class="rounded-2xl border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-950">
+              <div class="flex items-center justify-between">
+                <p class="text-xs font-medium uppercase tracking-wider text-neutral-500">Current status</p>
+                <p class="text-xs text-neutral-500">[[ statusLookup.result.tracking_number ]]</p>
+              </div>
+              <p class="mt-2 text-lg font-semibold text-neutral-900 dark:text-neutral-100">[[ statusLookup.result.status.toUpperCase() ]]</p>
+              <div class="mt-3 grid gap-2 text-sm text-neutral-700 dark:text-neutral-200">
+                <p><span class="text-neutral-500">Borrower:</span> [[ statusLookup.result.borrower ]]</p>
+                <p><span class="text-neutral-500">Risk label:</span> [[ statusLookup.result.risk_label ]]</p>
+                <p><span class="text-neutral-500">Timestamp:</span> [[ statusLookup.result.timestamp ]]</p>
+              </div>
+            </div>
+          </div>
         </section>
       </div>
     </main>
@@ -135,8 +160,13 @@
 
     createApp({
       setup() {
-        const inputMode = ref('manual');
         const selectedFile = ref(null);
+        const trackingNumber = ref(null);
+        const statusLookup = reactive({
+          tracking: '',
+          result: null,
+          error: ''
+        });
         const isAssessing = ref(false);
         const errorMessage = ref('');
         const riskScore = ref(null);
@@ -146,38 +176,48 @@
         const form = reactive({
           name: '',
           amount: null,
-          income: null
+          salary: null
         });
 
         const isFormValid = computed(() => {
           const basicInfo = form.name.trim().length > 2 && form.amount > 0;
-          if (inputMode.value === 'manual') {
-            return basicInfo && form.income > 0;
-          }
-          return basicInfo && selectedFile.value !== null;
+          return basicInfo && form.salary > 0 && selectedFile.value;
         });
 
-        const handleFileUpload = (e) => {
-          const file = e.target.files[0];
-          if (file) {
-            selectedFile.value = file;
-            form.income = Math.floor(Math.random() * (8000 - 2000) + 2000);
+        const handleFileUpload = async (event) => {
+          const file = event.target.files[0];
+          if (!file) return;
+          selectedFile.value = file;
+          form.salary = null;
+          errorMessage.value = '';
+          try {
+            const text = await file.text();
+            console.log(`Salary text: ${text}`)
+            const { data } = await axios.post('http://localhost:5000/api/parse-payslip', { text }, {
+              headers: { 'Content-Type': 'application/json' }
+            });
+            form.salary = data.salary;
+          } catch (err) {
+            form.salary = null;
+            errorMessage.value = err?.response?.data?.error || 'Unable to extract payroll data from that file.';
           }
         };
 
         const runAssessment = async () => {
           isAssessing.value = true;
           errorMessage.value = '';
-
           try {
-            const nameParts = form.name.trim().split(/\s+/);
+            const nameParts = form.name.trim().split(/\\s+/);
+            console.log(`Full name: ${nameParts}`);
             const firstName = nameParts[0] || '';
             const lastName = nameParts.slice(1).join(' ');
+            console.log(`First name: ${firstName}`);
+            console.log(`Last name: ${lastName}`);
 
             const payload = {
               first_name: firstName,
               last_name: lastName,
-              salary: form.income
+              payslip_salary: form.salary
             };
 
             const { data } = await axios.post('http://localhost:5000/api/assess', payload, {
@@ -186,10 +226,35 @@
 
             riskScore.value = data.risk_score;
             riskLabel.value = data.risk_label;
+            trackingNumber.value = data.tracking_number;
           } catch (err) {
             errorMessage.value = err?.response?.data?.error || 'Unable to process assessment.';
           } finally {
             isAssessing.value = false;
+          }
+        };
+
+        const lookupStatus = async () => {
+          statusLookup.error = '';
+          statusLookup.result = null;
+          if (!statusLookup.tracking) {
+            statusLookup.error = 'Tracking number is required.';
+            return;
+          }
+          try {
+            const { data } = await axios.get(`http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`);
+            statusLookup.result = data;
+          } catch (err) {
+            statusLookup.error = err?.response?.data?.error || 'Unable to fetch status.';
+          }
+        };
+
+        const copyTrackingNumber = async () => {
+          if (!trackingNumber.value) return;
+          try {
+            await navigator.clipboard.writeText(trackingNumber.value);
+          } catch {
+            errorMessage.value = 'Unable to copy from this browser.';
           }
         };
 
@@ -222,8 +287,9 @@
         });
 
         return {
-          inputMode,
           selectedFile,
+          trackingNumber,
+          statusLookup,
           isAssessing,
           errorMessage,
           riskScore,
@@ -232,6 +298,8 @@
           isFormValid,
           handleFileUpload,
           runAssessment,
+          lookupStatus,
+          copyTrackingNumber,
           riskClass,
           riskColor,
           toggleTheme,

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinanceGuard Staff Signup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="{{ url_for('static', filename='js/vue3.js')}}"></script>
+  <script src="{{ url_for('static', filename='js/chart.js')}}"></script>
+  <script src="{{ url_for('static', filename='js/tailwind.js')}}"></script>
+  <script src="{{ url_for('static', filename='js/axios.min.js')}}"></script>
+  <!-- <script src="../static/js/tailwind.js"></script>
+  <script src="../static/js/vue3.js"></script>
+  <script src="../static/js/axios.min.js"></script>" -->
+</head>
+<body class="min-h-screen bg-neutral-50 flex items-center justify-center py-12 px-4">
+  <div class="w-full max-w-md space-y-6 rounded-2xl border border-neutral-200 bg-white p-6 shadow-xl">
+    <div>
+      <h1 class="text-2xl font-semibold text-neutral-900">Create access</h1>
+      <p class="text-sm text-neutral-500">Register for the FinanceGuard dashboard.</p>
+    </div>
+    <form id="signupForm" class="space-y-4">
+      <label class="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Full name
+        <input name="full_name" type="text" required
+               class="mt-2 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-accent" />
+      </label>
+      <label class="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Email
+        <input name="email" type="email" required
+               class="mt-2 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-accent" />
+      </label>
+      <label class="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+        Password
+        <input name="password" type="password" required
+               class="mt-2 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-accent" />
+      </label>
+      <button
+        type="submit"
+        class="w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800"
+      >
+        Sign up
+      </button>
+    </form>
+    <p id="signupMessage" class="text-sm text-center text-red-500"></p>
+    <p class="text-xs text-center text-neutral-500">Already registered? <a href="/login" class="font-semibold text-accent">Login instead</a></p>
+  </div>
+
+  <script>
+    const form = document.getElementById('signupForm');
+    const message = document.getElementById('signupMessage');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      message.textContent = '';
+      const payload = {
+        full_name: form.full_name.value.trim(),
+        email: form.email.value.trim(),
+        password: form.password.value
+      };
+      try {
+        const { data } = await axios.post('/api/signup', payload);
+        message.textContent = `Account created for ${data.user.full_name}.`;
+        message.classList.remove('text-red-500');
+        message.classList.add('text-emerald-600');
+      } catch (err) {
+        message.textContent = err?.response?.data?.error || 'Unable to create account.';
+        message.classList.remove('text-emerald-600');
+        message.classList.add('text-red-500');
+      }
+    });
+  </script>
+</body>
+</html>

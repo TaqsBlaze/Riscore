@@ -1,0 +1,17 @@
+flask
+flask-cors
+flask-migrate
+flask-mail
+python-dotenv
+pytest
+pytest-cov
+pyjwt
+flask-sqlalchemy
+sqlalchemy>=2.0.0
+aiomysql
+pymysql
+pandas
+numpy
+scikit-learn
+# Database dependencies
+mysqlclient>=2.0.0
