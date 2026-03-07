@@ -42,7 +42,7 @@ async_database_url = os.getenv(
 app.config["SQLALCHEMY_DATABASE_URI"] = sync_database_url
 app.config["ASYNC_DATABASE_URI"] = async_database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = "financeGard/static/uploads"
+app.config['UPLOAD_FOLDER'] = "financeGuard/static/uploads"
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['ALLOWED_EXTENSIONS'] = ('pdf', 'doc', 'docx')
 app.config['TIMEZONE'] = 'Africa/Harare'
@@ -54,11 +54,11 @@ app.config['MAIL_USERNAME'] = 'noreply@your-domain.co.zw'
 app.config['MAIL_PASSWORD'] = 'your-password'
 app.config['MAIL_DEFAULT_SENDER'] = ('YourName', 'noreply@your-domain.co.zw')
 
-app.config['MODEL_PATH'] = "financeGard/model/risk_model.pkl"
-app.config['LABEL_ENCODER_PATH'] = "financeGard/model/label_encoder.pkl"
-app.config['FEATURE_COLS_PATH'] = "financeGard/model/feature_cols.pkl"
-app.config['MODEL_DIR'] = "financeGard/model"
-app.config['DATA_DIR'] = "financeGard/static/data"
+app.config['MODEL_PATH'] = "financeGuard/model/risk_model.pkl"
+app.config['LABEL_ENCODER_PATH'] = "financeGuard/model/label_encoder.pkl"
+app.config['FEATURE_COLS_PATH'] = "financeGuard/model/feature_cols.pkl"
+app.config['MODEL_DIR'] = "financeGuard/model"
+app.config['DATA_DIR'] = "financeGuard/static/data"
 
 mail = Mail(app) if Mail else None
 
