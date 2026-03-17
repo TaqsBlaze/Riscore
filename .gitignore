@@ -4,3 +4,5 @@ pytest*/
 migrations/
 venv/
 old/
+*.zip
+AGENTS.md

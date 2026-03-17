@@ -1,5 +1,6 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="h-full" x-data>
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,33 +10,34 @@
   <script src="{{ url_for('static', filename='js/axios.min.js') }}"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
+      darkMode: "class",
       theme: {
         extend: {
           colors: {
-            fg: '#0A0A0A',
-            bg: '#FAFAFA',
-            muted: '#6B7280',
-            border: '#E5E7EB',
-            accent: '#111827'
-          }
-        }
-      }
-    }
+            fg: "#0A0A0A",
+            bg: "#FAFAFA",
+            muted: "#6B7280",
+            border: "#E5E7EB",
+            accent: "#111827",
+          },
+        },
+      },
+    };
   </script>
 </head>
+
 <body class="h-full bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
   <div id="app" class="min-h-full">
     <header class="border-b border-neutral-200/70 dark:border-neutral-800">
       <div class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
         <div>
-          <div class="text-sm uppercase tracking-[0.25em] text-neutral-500">FinanceGuard</div>
-          <h1 class="text-xl font-semibold">Risk Check</h1>
+          <div class="text-sm uppercase tracking-[0.25em] text-neutral-500">
+            FinanceGuard
+          </div>
+          <h1 class="text-xl font-semibold">Loan Appliction Platform</h1>
         </div>
-        <button
-          @click="toggleTheme"
-          class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700"
-        >
+        <button @click="toggleTheme"
+          class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700">
           [[ themeLabel ]]
         </button>
       </div>
@@ -43,53 +45,82 @@
 
     <main class="mx-auto w-full max-w-6xl px-6 py-10">
       <div class="grid gap-6 lg:grid-cols-3">
-        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <section
+          class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 class="text-base font-semibold">Application Form</h2>
-          <p class="mt-1 text-sm text-neutral-500">Provide your details to receive a risk score.</p>
+          <p class="mt-1 text-sm text-neutral-500">
+            Provide your details to receive a risk score.
+          </p>
 
           <div class="mt-6 space-y-4">
             <div>
               <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Full name</label>
               <input v-model="form.name" type="text" placeholder="e.g. Jane Doe"
-                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+                class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
             </div>
             <div>
-              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Loan amount requested (USD)</label>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Loan amount requested
+                (USD)</label>
               <input v-model.number="form.amount" type="number" placeholder="5000"
-                     class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+                class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            </div>
+            <div>
+              <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Reason for loan</label>
+              <input v-model="form.reason" type="text" placeholder="e.g. Home improvement"
+                class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
             </div>
             <div>
               <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Payslip upload</label>
-              <div class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
-                <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">Upload payslip</button>
-                <div class="mt-2 text-xs" v-if="selectedFile">Selected: [[selectedFile.name ]]</div>
-                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden" accept=".pdf,.txt,.png,.jpg,.jpeg" />
+              <div
+                class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
+                <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">
+                  Upload payslip
+                </button>
+                <div class="mt-2 text-xs" v-if="selectedFile">
+                  Selected: [[selectedFile.name ]]
+                </div>
+                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden"
+                  accept=".pdf,.txt,.png,.jpg,.jpeg" />
               </div>
-              <p class="mt-2 text-xs text-neutral-400">We extract monthly pay information straight from your payslip.</p>
+              <p class="mt-2 text-xs text-neutral-400">
+                We extract monthly pay information straight from your payslip.
+              </p>
             </div>
             <div v-if="form.salary">
-              <p class="text-sm font-semibold text-emerald-600">Detected salary: $[[ form.salary.toFixed(2) ]]</p>
+              <p class="text-sm font-semibold text-emerald-600">
+                Detected salary: $[[ form.salary.toFixed(2) ]]
+              </p>
             </div>
             <button
               class="mt-2 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-              :disabled="isAssessing || !isFormValid"
-              @click="runAssessment"
-            >
+              :disabled="isAssessing || !isFormValid" @click="runAssessment">
               [[isAssessing ? 'Analyzing...' : 'Apply' ]]
             </button>
 
-            <p v-if="errorMessage" class="text-sm text-red-500">[[errorMessage ]]</p>
+            <p v-if="errorMessage" class="text-sm text-red-500">
+              [[errorMessage ]]
+            </p>
           </div>
         </section>
 
-        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <section
+          class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 class="text-base font-semibold">Risk Score</h2>
-          <p class="mt-1 text-sm text-neutral-500">Your result appears after assessment.</p>
+          <p class="mt-1 text-sm text-neutral-500">
+            Your result appears after assessment.
+          </p>
 
-          <div class="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 p-5 dark:border-neutral-800 dark:bg-neutral-950">
-            <div class="text-4xl font-semibold" v-if="riskScore !== null">[[riskScore.toFixed(1)]]</div>
-            <div class="text-4xl font-semibold text-neutral-400" v-else>--</div>
-            <div class="mt-2 text-xs uppercase tracking-[0.2em] text-neutral-500">Risk score (0-100)</div>
+          <div
+            class="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 p-5 dark:border-neutral-800 dark:bg-neutral-950">
+            <div class="text-4xl font-semibold" v-if="riskScore !== null">
+              [[riskScore.toFixed(1)]]
+            </div>
+            <div class="text-4xl font-semibold text-neutral-400" v-else>
+              --
+            </div>
+            <div class="mt-2 text-xs uppercase tracking-[0.2em] text-neutral-500">
+              Risk score (0-100)
+            </div>
 
             <div class="mt-5">
               <div class="flex items-center justify-between text-xs font-medium text-neutral-500">
@@ -99,8 +130,12 @@
               <div class="mt-2 h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800">
                 <div class="h-2 rounded-full" :style="{ width: riskScore + '%', background: riskColor }"></div>
               </div>
-              <div class="mt-3 text-sm font-semibold" :class="riskClass" v-if="riskLabel">[[riskLabel]] risk</div>
-              <div class="mt-3 text-sm text-neutral-400" v-else>Awaiting assessment.</div>
+              <div class="mt-3 text-sm font-semibold" :class="riskClass" v-if="riskLabel">
+                [[riskLabel]] risk
+              </div>
+              <div class="mt-3 text-sm text-neutral-400" v-else>
+                Awaiting assessment.
+              </div>
             </div>
           </div>
 
@@ -109,180 +144,285 @@
           </div>
 
           <div class="mt-6 space-y-4">
-            <div v-if="trackingNumber" class="rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-sm dark:border-neutral-700">
+            <div v-if="trackingNumber"
+              class="rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-sm dark:border-neutral-700">
               <div class="flex items-center justify-between">
                 <div>
                   <p class="text-xs text-neutral-500">Your tracking number</p>
                   <p class="text-lg font-semibold">[[ trackingNumber ]]</p>
                 </div>
-                <button class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-semibold" @click="copyTrackingNumber">Copy</button>
+                <button class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-semibold"
+                  @click="copyTrackingNumber">
+                  Copy
+                </button>
               </div>
-              <p class="mt-2 text-xs text-neutral-400">Copy and save this number for future status inquiries.</p>
+              <p class="mt-2 text-xs text-neutral-400">
+                Copy and save this number for future status inquiries.
+              </p>
             </div>
           </div>
         </section>
 
-        <section class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <section
+          class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 class="text-base font-semibold">Application Status</h2>
-          <p class="mt-1 text-sm text-neutral-500">Track a submission using your tracking number.</p>
+          <p class="mt-1 text-sm text-neutral-500">
+            Track a submission using your tracking number.
+          </p>
 
           <div class="mt-6 space-y-3">
             <input v-model="statusLookup.tracking" type="text" placeholder="Tracking number"
-                   class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
             <button
               class="w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-              :disabled="!statusLookup.tracking"
-              @click="lookupStatus"
-            >Check status</button>
+              :disabled="!statusLookup.tracking" @click="lookupStatus">
+              Check status
+            </button>
 
-            <p v-if="statusLookup.error" class="text-xs text-red-500">[[ statusLookup.error ]]</p>
+            <p v-if="statusLookup.error" class="text-xs text-red-500">
+              [[ statusLookup.error ]]
+            </p>
 
-            <div v-if="statusLookup.result" class="rounded-2xl border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-950">
+            <div v-if="statusLookup.result"
+              class="rounded-2xl border border-neutral-200 bg-neutral-50 p-5 text-sm dark:border-neutral-800 dark:bg-neutral-950">
               <div class="flex items-center justify-between">
-                <p class="text-xs font-medium uppercase tracking-wider text-neutral-500">Current status</p>
-                <p class="text-xs text-neutral-500">[[ statusLookup.result.tracking_number ]]</p>
+                <p class="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                  Current status
+                </p>
+                <p class="text-xs text-neutral-500">
+                  [[ statusLookup.result.tracking_number ]]
+                </p>
               </div>
-              <p class="mt-2 text-lg font-semibold text-neutral-900 dark:text-neutral-100">[[ statusLookup.result.status.toUpperCase() ]]</p>
+              <p class="mt-2 text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                [[ statusLookup.result.status.toUpperCase() ]]
+              </p>
               <div class="mt-3 grid gap-2 text-sm text-neutral-700 dark:text-neutral-200">
-                <p><span class="text-neutral-500">Borrower:</span> [[ statusLookup.result.borrower ]]</p>
-                <p><span class="text-neutral-500">Risk label:</span> [[ statusLookup.result.risk_label ]]</p>
-                <p><span class="text-neutral-500">Timestamp:</span> [[ statusLookup.result.timestamp ]]</p>
+                <p>
+                  <span class="text-neutral-500">Borrower:</span> [[
+                  statusLookup.result.borrower ]]
+                </p>
+                <p>
+                  <span class="text-neutral-500">Risk label:</span> [[
+                  statusLookup.result.risk_label ]]
+                </p>
+                <p>
+                  <span class="text-neutral-500">Timestamp:</span> [[
+                  statusLookup.result.timestamp ]]
+                </p>
               </div>
             </div>
           </div>
+          <!-- Copy toast -->
+          <transition name="toast">
+            <div v-if="showCopyToast"
+              class="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd"
+                  d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z"
+                  clip-rule="evenodd" />
+              </svg>
+              Tracking number copied
+            </div>
+          </transition>
         </section>
       </div>
     </main>
   </div>
 
+
+
+  <!-- <script src="{{ url_for('static', filename='js/pdf.min.mjs') }}"></script> -->
   <script>
     const { createApp, ref, reactive, computed, onMounted } = Vue;
-
+    
     createApp({
       setup() {
         const selectedFile = ref(null);
         const trackingNumber = ref(null);
+        const showCopyToast = ref(false);
+        let toastTimer = ref(null);
         const statusLookup = reactive({
-          tracking: '',
+          tracking: "",
           result: null,
-          error: ''
+          error: "",
         });
         const isAssessing = ref(false);
-        const errorMessage = ref('');
+        const errorMessage = ref("");
         const riskScore = ref(null);
-        const riskLabel = ref('');
-        const theme = ref('light');
+        const riskLabel = ref("");
+        const theme = ref("light");
 
         const form = reactive({
-          name: '',
+          name: "",
           amount: null,
-          salary: null
+          reason: "",
+          salary: null,
         });
 
         const isFormValid = computed(() => {
-          const basicInfo = form.name.trim().length > 2 && form.amount > 0;
+          const basicInfo =
+            form.name.trim().length > 2 &&
+            form.amount > 0 &&
+            form.reason.trim().length > 0;
           return basicInfo && form.salary > 0 && selectedFile.value;
         });
+
+        const extractTextFromPdf = async (file) => {
+          try {
+            const pdfjsLib = await import("http://localhost:5000/static/js/pdf.min.mjs");
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "http://localhost:5000/static/js/pdf.worker.min.mjs";
+            console.log(`IMPORT: ${JSON.stringify(pdfjsLib)}`);
+          } catch (error) {
+            console.log(`Error importing PDF scripts: ${error}`);
+          }
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer })
+            .promise;
+
+          let fullText = "";
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            const pageText = content.items.map((item) => item.str).join(" ");
+            fullText += pageText + "\n";
+          }
+          return fullText;
+        };
 
         const handleFileUpload = async (event) => {
           const file = event.target.files[0];
           if (!file) return;
           selectedFile.value = file;
           form.salary = null;
-          errorMessage.value = '';
+          errorMessage.value = "";
           try {
-            const text = await file.text();
-            console.log(`Salary text: ${text}`)
-            const { data } = await axios.post('http://localhost:5000/api/parse-payslip', { text }, {
-              headers: { 'Content-Type': 'application/json' }
-            });
+            let text;
+            if (file.type === "application/pdf") {
+              text = await extractTextFromPdf(file);
+            } else {
+              text = await file.text();
+            }
+            console.log(`Salary text: ${JSON.stringify(text)}`);
+            const { data } = await axios.post(
+              "http://localhost:5000/api/parse-payslip",
+              { text },
+              {
+                headers: { "Content-Type": "application/json" },
+              },
+            );
             form.salary = data.salary;
           } catch (err) {
             form.salary = null;
-            errorMessage.value = err?.response?.data?.error || 'Unable to extract payroll data from that file.';
+            errorMessage.value =
+              err?.response?.data?.error ||
+              "Unable to extract payroll data from that file.";
           }
         };
 
         const runAssessment = async () => {
           isAssessing.value = true;
-          errorMessage.value = '';
+          errorMessage.value = "";
           try {
             const nameParts = form.name.trim().split(/\\s+/);
             console.log(`Full name: ${nameParts}`);
-            const firstName = nameParts[0] || '';
-            const lastName = nameParts.slice(1).join(' ');
+            const firstName = nameParts[0] || "";
+            const lastName = nameParts.slice(1).join(" ");
             console.log(`First name: ${firstName}`);
             console.log(`Last name: ${lastName}`);
 
             const payload = {
               first_name: firstName,
               last_name: lastName,
-              payslip_salary: form.salary
+              amount: form.amount,
+              reason: form.reason.trim(),
+              payslip_salary: form.salary,
             };
 
-            const { data } = await axios.post('http://localhost:5000/api/assess', payload, {
-              headers: { 'Content-Type': 'application/json' }
-            });
+            const { data } = await axios.post(
+              "http://localhost:5000/api/assess",
+              payload,
+              {
+                headers: { "Content-Type": "application/json" },
+              },
+            );
 
             riskScore.value = data.risk_score;
             riskLabel.value = data.risk_label;
             trackingNumber.value = data.tracking_number;
           } catch (err) {
-            errorMessage.value = err?.response?.data?.error || 'Unable to process assessment.';
+            errorMessage.value =
+              err?.response?.data?.error || "Unable to process assessment.";
           } finally {
             isAssessing.value = false;
           }
         };
 
         const lookupStatus = async () => {
-          statusLookup.error = '';
+          statusLookup.error = "";
           statusLookup.result = null;
           if (!statusLookup.tracking) {
-            statusLookup.error = 'Tracking number is required.';
+            statusLookup.error = "Tracking number is required.";
             return;
           }
           try {
-            const { data } = await axios.get(`http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`);
+            const { data } = await axios.get(
+              `http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`,
+            );
             statusLookup.result = data;
           } catch (err) {
-            statusLookup.error = err?.response?.data?.error || 'Unable to fetch status.';
+            statusLookup.error =
+              err?.response?.data?.error || "Unable to fetch status.";
           }
         };
 
         const copyTrackingNumber = async () => {
+          console.log(`Copy button pressed`)
           if (!trackingNumber.value) return;
           try {
             await navigator.clipboard.writeText(trackingNumber.value);
+            if (toastTimer) clearTimeout(toastTimer);
+            showCopyToast.value = true;
+            setTimeout(() => {
+              showCopyToast.value = false;
+            }, 4000);
           } catch {
-            errorMessage.value = 'Unable to copy from this browser.';
+            errorMessage.value = "Unable to copy from this browser.";
           }
         };
 
         const riskClass = computed(() => {
-          if (riskLabel.value === 'High') return 'text-red-500';
-          if (riskLabel.value === 'Medium') return 'text-amber-500';
-          return 'text-emerald-500';
+          if (riskLabel.value === "High") return "text-red-500";
+          if (riskLabel.value === "Medium") return "text-amber-500";
+          return "text-emerald-500";
         });
 
         const riskColor = computed(() => {
-          if (riskLabel.value === 'High') return '#ef4444';
-          if (riskLabel.value === 'Medium') return '#f59e0b';
-          return '#10b981';
+          if (riskLabel.value === "High") return "#ef4444";
+          if (riskLabel.value === "Medium") return "#f59e0b";
+          return "#10b981";
         });
 
         const toggleTheme = () => {
-          theme.value = theme.value === 'light' ? 'dark' : 'light';
-          document.documentElement.classList.toggle('dark', theme.value === 'dark');
-          localStorage.setItem('theme', theme.value);
+          theme.value = theme.value === "light" ? "dark" : "light";
+          document.documentElement.classList.toggle(
+            "dark",
+            theme.value === "dark",
+          );
+          localStorage.setItem("theme", theme.value);
         };
 
-        const themeLabel = computed(() => theme.value === 'light' ? 'Dark mode' : 'Light mode');
+        const themeLabel = computed(() =>
+          theme.value === "light" ? "Dark mode" : "Light mode",
+        );
 
         onMounted(() => {
-          const saved = localStorage.getItem('theme');
+          const saved = localStorage.getItem("theme");
           if (saved) {
             theme.value = saved;
-            document.documentElement.classList.toggle('dark', theme.value === 'dark');
+            document.documentElement.classList.toggle(
+              "dark",
+              theme.value === "dark",
+            );
           }
         });
 
@@ -300,14 +440,50 @@
           runAssessment,
           lookupStatus,
           copyTrackingNumber,
+          showCopyToast,
           riskClass,
           riskColor,
           toggleTheme,
-          themeLabel
+          themeLabel,
         };
       },
-      delimiters: ['[[', ']]']
-    }).mount('#app');
+      delimiters: ["[[", "]]"],
+    }).mount("#app");
   </script>
+
+  <style>
+    .toast-enter-active {
+      animation: slide-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .toast-leave-active {
+      animation: slide-out 0.25s ease-in forwards;
+    }
+
+    @keyframes slide-in {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes slide-out {
+      from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+      }
+    }
+  </style>
 </body>
+
 </html>

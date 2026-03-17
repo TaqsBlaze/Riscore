@@ -12,7 +12,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("risksense")
+log = logging.getLogger("FinanceGuard")
 
 
 _engine = None

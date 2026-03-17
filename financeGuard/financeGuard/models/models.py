@@ -22,6 +22,7 @@ class Borrower(db.Model):
     first_name              = Column(String(60))
     last_name               = Column(String(60))
     salary                  = Column(Float,  default=0.0)
+    loan_amount             = Column(Float,  default=0.0)
     employment_sector       = Column(String(80))
     job_title               = Column(String(80))
     total_prev_loans        = Column(Float,  default=0.0)

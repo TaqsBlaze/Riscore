@@ -152,21 +152,28 @@ def _parse_float(value, field_name, *, min_value=None):
 
 
 def _build_features(salary, sector, reason, total_loans, active_loans,
-                    outstanding, avg_loan, return_rate, days_due, mfi_score):
+                    outstanding, avg_loan, return_rate, days_due, mfi_score,
+                    requested_amount):
     """Synchronous CPU work - always called inside ThreadPoolExecutor."""
     ensure_assets_loaded()
     salary = max(float(salary), 1)
+    base_outstanding = float(outstanding)
+    base_avg_loan = float(avg_loan)
+    requested_amount = max(float(requested_amount or 0), 0.0)
+    adjusted_outstanding = base_outstanding + requested_amount
+    adjusted_avg_loan = ((base_avg_loan + requested_amount) / 2) if base_avg_loan > 0 else requested_amount
+    loan_to_income_amount = max(adjusted_avg_loan, requested_amount)
     row = {
         "Current Monthly Salary (USD)":    salary,
         "Total Previous Loans":            float(total_loans),
         "Active Loans":                    float(active_loans),
-        "Total Outstanding Balance (USD)": float(outstanding),
-        "Avg Loan Amount (USD)":           float(avg_loan),
+        "Total Outstanding Balance (USD)": adjusted_outstanding,
+        "Avg Loan Amount (USD)":           max(adjusted_avg_loan, 0.0),
         "Historical Return Rate (%)":      float(return_rate),
         "Days Past Due (Max)":             float(days_due),
         "MFI Diversity Score":             float(mfi_score),
-        "Debt_to_Income":                  float(outstanding) / salary,
-        "Loan_to_Income":                  float(avg_loan)    / salary,
+        "Debt_to_Income":                  adjusted_outstanding / salary,
+        "Loan_to_Income":                  loan_to_income_amount / salary,
         "Active_Loan_Density":             float(active_loans) / max(float(total_loans), 1),
         "Return_Rate_Norm":                float(return_rate) / 100.0,
         "Is_Overdue":                      int(float(days_due) > 0),
@@ -184,11 +191,16 @@ def _build_features(salary, sector, reason, total_loans, active_loans,
     return pd.DataFrame([row])[FEATURE_COLS]
 
 
+AUTO_DECISION_REJECTION_THRESHOLD = 35.0  # anomaly score that triggers rejection for non-high labels
+
+
 def _score_sync(salary, sector, reason, total_loans, active_loans,
-                outstanding, avg_loan, return_rate, days_due, mfi_score):
+                outstanding, avg_loan, return_rate, days_due, mfi_score,
+                requested_amount):
     """Synchronous ML scoring - must run in ThreadPoolExecutor, never on event loop."""
     X         = _build_features(salary, sector, reason, total_loans, active_loans,
-                                 outstanding, avg_loan, return_rate, days_due, mfi_score)
+                                 outstanding, avg_loan, return_rate, days_due, mfi_score,
+                                 requested_amount)
     proba     = RISK_MODEL.predict_proba(X)[0]
     classes   = LABEL_ENC.classes_
     prob_dict = {c: float(p) for c, p in zip(classes, proba)}
@@ -203,7 +215,8 @@ def _score_sync(salary, sector, reason, total_loans, active_loans,
 
 
 async def score_borrower_async(salary, sector, reason, total_loans, active_loans,
-                                outstanding, avg_loan, return_rate, days_due, mfi_score):
+                                outstanding, avg_loan, return_rate, days_due, mfi_score,
+                                requested_amount):
     """
     Async wrapper: offloads CPU-bound ML inference to the thread pool.
     The event loop is free to handle other requests while scoring runs.
@@ -214,6 +227,7 @@ async def score_borrower_async(salary, sector, reason, total_loans, active_loans
         _score_sync,
         salary, sector, reason, total_loans, active_loans,
         outstanding, avg_loan, return_rate, days_due, mfi_score,
+        requested_amount,
     )
 
 def evaluate_application_anomalies(
@@ -226,6 +240,7 @@ def evaluate_application_anomalies(
     days_due: float,
     is_existing_borrower: bool,
     recent_application_count: int,
+    loan_amount: float = 0.0,
 ):
     anomalies = []
 
@@ -282,12 +297,45 @@ def evaluate_application_anomalies(
             15.0,
         )
 
+    request_to_salary = float(loan_amount) / max(float(salary), 1.0)
+    if request_to_salary >= 2.5:
+        add(
+            "HIGH_REQUESTED_AMOUNT",
+            f"Requested loan is {request_to_salary:.1f}x monthly salary.",
+            15.0,
+        )
+
     anomaly_score = round(min(100.0, sum(item["score"] for item in anomalies)), 1)
     return {
         "is_anomaly": len(anomalies) > 0,
         "anomaly_score": anomaly_score,
         "anomalies": anomalies,
     }
+
+
+def decide_application(*, score: float, label: str, anomaly_score: float, anomaly_codes: str) -> tuple[str, str]:
+    """
+    Automatic loan decisioning:
+      - High risk => reject.
+      - Any label with anomaly_score above threshold => reject.
+      - Otherwise approve.
+    Returns (status, reason).
+    """
+    safe_label = (label or "").title()
+    if safe_label == "High":
+        return (
+            "rejected",
+            f"Rejected automatically: high-risk classification ({score:.1f}/100). Anomalies: {anomaly_codes or 'none'}."
+        )
+    if float(anomaly_score) >= AUTO_DECISION_REJECTION_THRESHOLD:
+        return (
+            "rejected",
+            f"Rejected automatically: anomaly score {anomaly_score:.1f} ({anomaly_codes or 'none'})."
+        )
+    return (
+        "approved",
+        f"Approved automatically based on {safe_label.lower() or 'low'} risk score {score:.1f}."
+    )
 
 
 # --------------------------------------------------------------
@@ -377,13 +425,6 @@ async def seed_data():
     sample = MFI_DF.sample(10, random_state=99)
     now    = datetime.datetime.now(datetime.timezone.utc)
 
-    def _status_for_label(label: str) -> str:
-        if label == "High":
-            return "suspended"
-        if label == "Medium":
-            return "processing"
-        return "approved"
-
     async def _insert_one(i: int, row: pd.Series):
         async with AsyncSessionFactory() as session:
             parts = row["Full Name"].split()
@@ -393,13 +434,32 @@ async def seed_data():
             tr    = float(row["Total Previous Loans"]);  al = float(row["Active Loans"])
             ob    = float(row["Total Outstanding Balance (USD)"])
             am    = float(row["Avg Loan Amount (USD)"])
+            loan_req = float(row["Avg Loan Amount (USD)"])
             rr    = float(row["Historical Return Rate (%)"])
             dp    = float(row["Days Past Due (Max)"])
             ms    = float(row["MFI Diversity Score"])
 
             # Scoring runs in the thread pool even during seeding
             score, label, probs = await score_borrower_async(
-                sal, sec, rea, tr, al, ob, am, rr, dp, ms
+                sal, sec, rea, tr, al, ob, am, rr, dp, ms, loan_req
+            )
+            anomaly_eval = evaluate_application_anomalies(
+                salary=sal,
+                total_loans=tr,
+                active_loans=al,
+                outstanding=ob,
+                return_rate=rr,
+                days_due=dp,
+                is_existing_borrower=False,
+                recent_application_count=1,
+                loan_amount=loan_req,
+            )
+            anomaly_codes = ", ".join(a["code"] for a in anomaly_eval["anomalies"]) if anomaly_eval["anomalies"] else "none"
+            status, reason = decide_application(
+                score=score,
+                label=label,
+                anomaly_score=anomaly_eval["anomaly_score"],
+                anomaly_codes=anomaly_codes,
             )
             bid = f"S{i+1:03d}"
             tracking_number = str(uuid.uuid4())
@@ -413,18 +473,19 @@ async def seed_data():
                 risk_probability_high=probs.get("High",   0),
                 risk_probability_medium=probs.get("Medium", 0),
                 risk_probability_low=probs.get("Low",    0),
+                loan_amount=loan_req,
                 data_source="mfi_exact", created_at=now,
             ))
             session.add(Transaction(
                 borrower_id=bid,
                 type="assessment",
-                amount=sal,
-                description="Seeded assessment",
-                is_anomaly=(label == "High"),
-                anomaly_score=0.0,
+                amount=loan_req,
+                description=reason,
+                is_anomaly=anomaly_eval["is_anomaly"],
+                anomaly_score=anomaly_eval["anomaly_score"],
                 risk_score_after=score,
                 risk_label_after=label,
-                status=_status_for_label(label),
+                status=status,
                 tracking_number=tracking_number,
                 timestamp=now,
             ))
@@ -486,16 +547,16 @@ async def index():
 
 @app.route("/dashboard")
 async def dashboard():
-    return render_template("dashboard.html")
+    return render_template("dashboard/dashboard.html")
 
 @app.route("/login")
 async def login_page():
-    return render_template("login.html")
+    return render_template("deshboard/login.html")
 
 
 @app.route("/signup")
 async def signup_page():
-    return render_template("signup.html")
+    return render_template("dashboard/signup.html")
 
 
 
@@ -588,12 +649,11 @@ async def get_alerts():
             except ValueError:
                 limit = 10
                 offset = 0
-            result = await session.execute(
-                select(Alert)
-                .order_by(desc(Alert.timestamp))
-                .offset(offset)
-                .limit(limit)
-            )
+            include_read = request.args.get("include_read", "0") in {"1", "true", "True"}
+            query = select(Alert).order_by(desc(Alert.timestamp)).offset(offset).limit(limit)
+            if not include_read:
+                query = query.where(Alert.is_read == False)
+            result = await session.execute(query)
             alerts = result.scalars().all()
             return jsonify([a.to_dict() for a in alerts])
     except Exception:
@@ -658,6 +718,7 @@ async def get_applications():
                 payload.append({
                     "tracking_number": tx.tracking_number,
                     "status": tx.status or "processing",
+                    "decision_reason": tx.description,
                     "amount": float(tx.amount or 0.0),
                     "risk_score": tx.risk_score_after,
                     "risk_label": tx.risk_label_after,
@@ -678,24 +739,8 @@ async def get_applications():
 
 @app.route("/api/applications/<tracking_number>/status", methods=["POST"])
 async def update_application_status(tracking_number):
-    data = request.get_json(silent=True) or {}
-    status = (data.get("status") or "").lower()
-    if status not in VALID_APPLICATION_STATUSES:
-        return jsonify({"error": "Invalid status"}), 400
-    try:
-        async with AsyncSessionFactory() as session:
-            result = await session.execute(
-                select(Transaction).where(Transaction.tracking_number == tracking_number)
-            )
-            tx = result.scalar_one_or_none()
-            if not tx:
-                return jsonify({"error": "Application not found"}), 404
-            tx.status = status
-            await session.commit()
-            return jsonify({"success": True, "status": status})
-    except Exception:
-        log.exception("update_application_status() error")
-        return jsonify({"error": "Unable to update status"}), 500
+    # Manual status updates are intentionally disabled to enforce automated decisions.
+    return jsonify({"error": "Manual status updates are disabled. Decisions are automatic."}), 403
 
 
 @app.route("/api/application-status/<tracking_number>")
@@ -714,6 +759,7 @@ async def application_status(tracking_number):
             return jsonify({
                 "tracking_number": tx.tracking_number,
                 "status": tx.status or "processing",
+                "decision_reason": tx.description,
                 "risk_score": tx.risk_score_after,
                 "risk_label": tx.risk_label_after,
                 "borrower": borrower.full_name if borrower else tx.borrower_id,
@@ -895,6 +941,18 @@ async def assess():
     if not data:
         return jsonify({"error": "Invalid JSON body."}), 400
 
+    amount_value = data['amount']
+    if amount_value is None:
+        return jsonify({"error": "Loan amount is required."}), 400
+    try:
+        loan_amount = _parse_float(amount_value, "amount", min_value=0.01)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    loan_reason = (data.get("reason") or "").strip()
+    if not loan_reason:
+        return jsonify({"error": "Loan reason is required."}), 400
+
     try:
         ensure_assets_loaded()
     except Exception as exc:
@@ -939,7 +997,8 @@ async def assess():
 
     # -- ML scoring (CPU-bound -> thread pool, non-blocking) ---
     score, label, probs = await score_borrower_async(
-        salary, sec, rea, tr, al, ob, am, rr, dp, ms
+        salary, sec, loan_reason, tr, al, ob, am, rr, dp, ms,
+        loan_amount
     )
 
     full_name = f"{first_name} {last_name}"
@@ -972,12 +1031,14 @@ async def assess():
                     .where(Borrower.id == bid)
                     .values(
                         salary                  = salary,
+                        loan_amount             = loan_amount,
                         risk_score              = score,
                         risk_label              = label,
                         risk_probability_high   = probs.get("High",   0),
                         risk_probability_medium = probs.get("Medium", 0),
                         risk_probability_low    = probs.get("Low",    0),
                         data_source             = data_source,
+                        common_loan_reason      = loan_reason,
                     )
                 )
             else:
@@ -986,12 +1047,13 @@ async def assess():
                     id=bid, full_name=full_name, first_name=first_name, last_name=last_name,
                     salary=salary, employment_sector=sec, job_title=job,
                     total_prev_loans=tr, active_loans=al, outstanding_balance=ob,
-                    avg_loan_amount=am, common_loan_reason=rea, return_rate=rr,
+                    avg_loan_amount=am, common_loan_reason=loan_reason, return_rate=rr,
                     days_past_due=dp, mfi_diversity_score=ms,
                     risk_score=score, risk_label=label,
                     risk_probability_high=probs.get("High",   0),
                     risk_probability_medium=probs.get("Medium", 0),
                     risk_probability_low=probs.get("Low",    0),
+                    loan_amount=loan_amount,
                     data_source=data_source, created_at=now,
                 ))
 
@@ -1004,16 +1066,23 @@ async def assess():
                 days_due=dp,
                 is_existing_borrower=bool(existing),
                 recent_application_count=recent_assessment_count + 1,
+                loan_amount=loan_amount,
             )
 
             anomaly_codes = ", ".join(a["code"] for a in anomaly_eval["anomalies"]) if anomaly_eval["anomalies"] else "none"
+            decision_status, decision_reason = decide_application(
+                score=score,
+                label=label,
+                anomaly_score=anomaly_eval["anomaly_score"],
+                anomaly_codes=anomaly_codes,
+            )
             tracking_number = _generate_tracking_number()
             session.add(Transaction(
-                borrower_id=bid, type="assessment", amount=salary,
-                description=f"Assessment [{data_source}] anomalies: {anomaly_codes}",
+                borrower_id=bid, type="assessment", amount=loan_amount,
+                description=decision_reason,
                 is_anomaly=anomaly_eval["is_anomaly"], anomaly_score=anomaly_eval["anomaly_score"],
                 risk_score_after=score, risk_label_after=label,
-                status="processing",
+                status=decision_status,
                 tracking_number=tracking_number,
                 timestamp=now,
             ))
@@ -1050,7 +1119,11 @@ async def assess():
         "borrower_id":   bid,
         "full_name":     full_name,
         "salary":        salary,
+        "loan_amount":   loan_amount,
+        "loan_reason":   loan_reason,
         "tracking_number": tracking_number,
+        "decision_status": decision_status,
+        "decision_reason": decision_reason,
         "risk_score":    score,
         "risk_label":    label,
         "probabilities": {k: round(v * 100, 1) for k, v in probs.items()},
@@ -1065,6 +1138,8 @@ async def assess():
             "outstanding":       ob,
             "return_rate":       rr,
             "days_past_due":     dp,
+            "loan_reason":       loan_reason,
+            "requested_amount":  loan_amount,
         },
     })
 
