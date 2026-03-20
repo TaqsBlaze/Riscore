@@ -6,3 +6,6 @@ venv/
 old/
 *.zip
 AGENTS.md
+node_modules/
+*.json
+*.pdf

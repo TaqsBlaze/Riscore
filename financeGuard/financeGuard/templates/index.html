@@ -91,6 +91,18 @@
                 Detected salary: $[[ form.salary.toFixed(2) ]]
               </p>
             </div>
+            <div v-if="payslipName" class="mt-1 text-xs text-neutral-500">
+              Payslip name: <span class="font-semibold">[[ payslipName ]]</span>
+            </div>
+            <div v-if="payslipDepartment" class="mt-1 text-xs text-neutral-500">
+              Department: <span class="font-semibold">[[ payslipDepartment ]]</span>
+            </div>
+            <div v-if="payslipPosition" class="mt-1 text-xs text-neutral-500">
+              Position: <span class="font-semibold">[[ payslipPosition ]]</span>
+            </div>
+            <p v-if="nameMismatchMessage" class="text-sm text-red-500">
+              [[ nameMismatchMessage ]]
+            </p>
             <button
               class="mt-2 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
               :disabled="isAssessing || !isFormValid" @click="runAssessment">
@@ -227,6 +239,33 @@
         </section>
       </div>
     </main>
+
+    <transition name="toast">
+      <div v-show="showRejectionModal" style="display: none;"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-neutral-900">
+          <div class="flex items-start gap-3">
+            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-500/10 dark:text-red-400">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"/>
+              </svg>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-base font-semibold">Application Not Approved</h3>
+              <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+                [[ rejectionReason ]]
+              </p>
+            </div>
+          </div>
+          <div class="mt-5 flex justify-end">
+            <button @click="showRejectionModal = false"
+              class="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 
 
@@ -241,6 +280,9 @@
         const trackingNumber = ref(null);
         const showCopyToast = ref(false);
         let toastTimer = ref(null);
+        const payslipName = ref("");
+        const payslipDepartment = ref("");
+        const payslipPosition = ref("");
         const statusLookup = reactive({
           tracking: "",
           result: null,
@@ -250,6 +292,9 @@
         const errorMessage = ref("");
         const riskScore = ref(null);
         const riskLabel = ref("");
+        const decisionStatus = ref("");
+        const decisionReason = ref("");
+        const showRejectionModal = ref(false);
         const theme = ref("light");
 
         const form = reactive({
@@ -259,12 +304,36 @@
           salary: null,
         });
 
+        const normalizeName = (value) =>
+          (value || "")
+            .toLowerCase()
+            .replace(/[^a-z\s'-]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const payslipNameMatches = computed(() => {
+          if (!payslipName.value) return true;
+          if (!form.name.trim()) return true;
+          return normalizeName(payslipName.value) === normalizeName(form.name);
+        });
+
+        const nameMismatchMessage = computed(() =>
+          payslipName.value && !payslipNameMatches.value
+            ? "User name and name from payslip do not match."
+            : ""
+        );
+
         const isFormValid = computed(() => {
           const basicInfo =
             form.name.trim().length > 2 &&
             form.amount > 0 &&
             form.reason.trim().length > 0;
-          return basicInfo && form.salary > 0 && selectedFile.value;
+          return (
+            basicInfo &&
+            form.salary > 0 &&
+            selectedFile.value &&
+            payslipNameMatches.value
+          );
         });
 
         const extractTextFromPdf = async (file) => {
@@ -311,8 +380,19 @@
               },
             );
             form.salary = data.salary;
+            payslipName.value = data.employee_name || "";
+            payslipDepartment.value = data.department || "";
+            payslipPosition.value = data.position || "";
+            if (!payslipNameMatches.value) {
+              errorMessage.value = "User name and name from payslip do not match.";
+            } else {
+              errorMessage.value = "";
+            }
           } catch (err) {
             form.salary = null;
+            payslipName.value = "";
+            payslipDepartment.value = "";
+            payslipPosition.value = "";
             errorMessage.value =
               err?.response?.data?.error ||
               "Unable to extract payroll data from that file.";
@@ -322,20 +402,23 @@
         const runAssessment = async () => {
           isAssessing.value = true;
           errorMessage.value = "";
+          if (!payslipNameMatches.value) {
+            errorMessage.value = "User name and name from payslip do not match.";
+            isAssessing.value = false;
+            return;
+          }
           try {
-            const nameParts = form.name.trim().split(/\\s+/);
-            console.log(`Full name: ${nameParts}`);
-            const firstName = nameParts[0] || "";
-            const lastName = nameParts.slice(1).join(" ");
-            console.log(`First name: ${firstName}`);
-            console.log(`Last name: ${lastName}`);
+            const fullName = form.name.trim();
 
             const payload = {
-              first_name: firstName,
-              last_name: lastName,
+              first_name: fullName,
+              last_name: "",
               amount: form.amount,
               reason: form.reason.trim(),
               payslip_salary: form.salary,
+              payslip_name: payslipName.value,
+              payslip_department: payslipDepartment.value,
+              payslip_position: payslipPosition.value,
             };
 
             const { data } = await axios.post(
@@ -349,6 +432,11 @@
             riskScore.value = data.risk_score;
             riskLabel.value = data.risk_label;
             trackingNumber.value = data.tracking_number;
+            decisionStatus.value = data.decision_status || "";
+            decisionReason.value = data.decision_reason || "";
+            if (decisionStatus.value === "rejected") {
+              showRejectionModal.value = true;
+            }
           } catch (err) {
             errorMessage.value =
               err?.response?.data?.error || "Unable to process assessment.";
@@ -369,6 +457,10 @@
               `http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`,
             );
             statusLookup.result = data;
+            if (data?.status === "rejected") {
+              decisionReason.value = data?.decision_reason || "";
+              showRejectionModal.value = true;
+            }
           } catch (err) {
             statusLookup.error =
               err?.response?.data?.error || "Unable to fetch status.";
@@ -400,6 +492,11 @@
           if (riskLabel.value === "High") return "#ef4444";
           if (riskLabel.value === "Medium") return "#f59e0b";
           return "#10b981";
+        });
+
+        const rejectionReason = computed(() => {
+          return decisionReason.value ||
+            "Rejected: risk assessment did not meet approval requirements.";
         });
 
         const toggleTheme = () => {
@@ -436,6 +533,10 @@
           riskLabel,
           form,
           isFormValid,
+          payslipName,
+          payslipDepartment,
+          payslipPosition,
+          nameMismatchMessage,
           handleFileUpload,
           runAssessment,
           lookupStatus,
@@ -443,6 +544,8 @@
           showCopyToast,
           riskClass,
           riskColor,
+          rejectionReason,
+          showRejectionModal,
           toggleTheme,
           themeLabel,
         };

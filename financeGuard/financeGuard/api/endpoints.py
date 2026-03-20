@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from flask import jsonify, render_template, request, url_for
 from financeGuard.auth.token import token_required
-from financeGuard import app, db
+from financeGuard import app, db, mail
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean,
@@ -13,6 +13,10 @@ from concurrent.futures import ThreadPoolExecutor
 from financeGuard.api import AsyncSessionFactory, init_db, log
 from financeGuard.models.models import BlacklistedUser, Borrower, User, Alert, Transaction
 from werkzeug.security import check_password_hash, generate_password_hash
+try:
+    from flask_mail import Message
+except ModuleNotFoundError:  # optional dependency for local dev
+    Message = None
 
 try:
     import pandas as pd
@@ -146,6 +150,17 @@ def _parse_float(value, field_name, *, min_value=None):
         raise ValueError(f"{field_name} must be >= {min_value}.")
     return parsed
 
+def _normalize_name(value: str) -> str:
+    value = (value or "").strip().lower()
+    value = re.sub(r"[^a-z\s'-]+", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+def _names_match(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return _normalize_name(a) == _normalize_name(b)
+
 # --------------------------------------------------------------
 #  Feature Engineering  (pure CPU, runs inside executor)
 # --------------------------------------------------------------
@@ -241,6 +256,7 @@ def evaluate_application_anomalies(
     is_existing_borrower: bool,
     recent_application_count: int,
     loan_amount: float = 0.0,
+    unsettled_loan_count: int = 0,
 ):
     anomalies = []
 
@@ -266,6 +282,13 @@ def evaluate_application_anomalies(
             "FREQUENT_LOAN_APPLICATIONS",
             f"High application frequency: {recent_application_count} assessments in {FREQUENT_APPLICATION_WINDOW_DAYS} days.",
             18.0,
+        )
+
+    if int(unsettled_loan_count) > 0:
+        add(
+            "UNSETTLED_PRIOR_LOAN",
+            f"Existing approved loan(s) detected ({int(unsettled_loan_count)}).",
+            14.0,
         )
 
     if (not is_existing_borrower) and float(total_loans) <= 0 and float(active_loans) <= 0:
@@ -313,6 +336,50 @@ def evaluate_application_anomalies(
     }
 
 
+def _format_rejection_reason(*, score: float, label: str, anomaly_codes: list[str]) -> str:
+    if (label or "").title() == "High":
+        return (
+            f"Rejected: high risk score ({score:.1f}/100). "
+            "Your application cannot be approved."
+        )
+    if "FREQUENT_LOAN_APPLICATIONS" in anomaly_codes:
+        return (
+            "Rejected: too many recent loan applications. "
+            "Your application cannot be approved."
+        )
+    if "UNSETTLED_PRIOR_LOAN" in anomaly_codes or "OUTSTANDING_ACTIVE_LOAN" in anomaly_codes:
+        return (
+            "Rejected: you have an outstanding active loan. "
+            "Your application cannot be approved."
+        )
+    if "HIGH_DEBT_TO_INCOME" in anomaly_codes:
+        return (
+            "Rejected: debt-to-income ratio is too high. "
+            "Your application cannot be approved."
+        )
+    if "LOW_REPAYMENT_RATE" in anomaly_codes:
+        return (
+            "Rejected: repayment history is below the required threshold. "
+            "Your application cannot be approved."
+        )
+    if "SEVERE_PAST_DUE" in anomaly_codes:
+        return (
+            "Rejected: severe past-due history detected. "
+            "Your application cannot be approved."
+        )
+    if "HIGH_REQUESTED_AMOUNT" in anomaly_codes:
+        return (
+            "Rejected: requested amount is too high relative to your salary. "
+            "Your application cannot be approved."
+        )
+    if "NEW_USER_NO_HISTORY" in anomaly_codes:
+        return (
+            "Rejected: no borrowing history is available to assess this request. "
+            "Your application cannot be approved."
+        )
+    return "Rejected: risk assessment did not meet approval requirements."
+
+
 def decide_application(*, score: float, label: str, anomaly_score: float, anomaly_codes: str) -> tuple[str, str]:
     """
     Automatic loan decisioning:
@@ -322,16 +389,11 @@ def decide_application(*, score: float, label: str, anomaly_score: float, anomal
     Returns (status, reason).
     """
     safe_label = (label or "").title()
+    codes = [c.strip() for c in (anomaly_codes or "").split(",") if c.strip() and c.strip() != "none"]
     if safe_label == "High":
-        return (
-            "rejected",
-            f"Rejected automatically: high-risk classification ({score:.1f}/100). Anomalies: {anomaly_codes or 'none'}."
-        )
+        return ("rejected", _format_rejection_reason(score=score, label=label, anomaly_codes=codes))
     if float(anomaly_score) >= AUTO_DECISION_REJECTION_THRESHOLD:
-        return (
-            "rejected",
-            f"Rejected automatically: anomaly score {anomaly_score:.1f} ({anomaly_codes or 'none'})."
-        )
+        return ("rejected", _format_rejection_reason(score=score, label=label, anomaly_codes=codes))
     return (
         "approved",
         f"Approved automatically based on {safe_label.lower() or 'low'} risk score {score:.1f}."
@@ -374,7 +436,129 @@ def infer_from_salary(salary: float) -> dict:
 # --------------------------------------------------------------
 #  Alert Dispatch  (fire-and-forget via asyncio.create_task)
 # --------------------------------------------------------------
-async def _dispatch_alert_channels(name: str, message: str, severity: str, channel: str):
+def _build_admin_alert_email_html(
+    *,
+    alert_type: str,
+    severity: str,
+    borrower_name: str,
+    message: str,
+    timestamp: datetime.datetime,
+) -> str:
+    safe_type = (alert_type or "ALERT").replace("_", " ").title()
+    safe_sev = (severity or "INFO").upper()
+    badge_color = "#ef4444" if safe_sev in {"CRITICAL", "HIGH"} else "#f59e0b" if safe_sev == "MEDIUM" else "#3b82f6"
+    ts = timestamp.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FinanceGuard Alert</title>
+  </head>
+  <body style="margin:0;background:#f5f7fb;font-family:Segoe UI, Arial, sans-serif;color:#1f2937;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 14px 35px rgba(15,23,42,0.08);">
+            <tr>
+              <td style="padding:28px 32px;background:linear-gradient(120deg,#0f172a,#1e293b);color:#ffffff;">
+                <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:0.7;">FinanceGuard Alert</div>
+                <div style="font-size:22px;font-weight:600;margin-top:6px;">{safe_type}</div>
+                <div style="margin-top:10px;display:inline-block;padding:6px 12px;border-radius:999px;background:{badge_color};color:#ffffff;font-weight:600;font-size:12px;">
+                  Severity: {safe_sev}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 32px;">
+                <p style="margin:0 0 12px;font-size:16px;font-weight:600;">Borrower: {borrower_name}</p>
+                <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#475569;">{message}</p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  <tr>
+                    <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;">
+                      Timestamp: {ts}
+                    </td>
+                  </tr>
+                </table>
+                <div style="margin-top:18px;padding:16px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;">
+                  <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:6px;">Suggested Actions</div>
+                  <ul style="margin:0;padding-left:18px;font-size:13px;color:#334155;line-height:1.6;">
+                    <li>Review recent applications and anomaly history.</li>
+                    <li>Confirm borrower identity and outstanding obligations.</li>
+                    <li>Escalate to risk operations if needed.</li>
+                  </ul>
+                </div>
+              </td>
+            </tr>
+          </table>
+          <div style="margin-top:14px;font-size:11px;color:#94a3b8;">
+            This message was generated automatically by FinanceGuard.
+          </div>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+
+async def _send_admin_alert_email(
+    *,
+    alert_type: str,
+    severity: str,
+    borrower_name: str,
+    message: str,
+    timestamp: datetime.datetime,
+):
+    admin_email = (
+        os.getenv("ADMIN_ALERT_EMAIL")
+        or app.config.get("ADMIN_ALERT_EMAIL")
+        or os.getenv("ADMIN_EMAIL")
+        or app.config.get("ADMIN_EMAIL")
+    )
+    if not admin_email:
+        log.warning("Admin alert email not configured; skipping email.")
+        return
+    if mail is None or Message is None:
+        log.info("Flask-Mail not available; skipping admin email send.")
+        return
+
+    subject = f"[{(severity or 'INFO').upper()}] FinanceGuard Alert: {(alert_type or 'ALERT').replace('_', ' ')}"
+    html = _build_admin_alert_email_html(
+        alert_type=alert_type,
+        severity=severity,
+        borrower_name=borrower_name,
+        message=message,
+        timestamp=timestamp,
+    )
+    body = (
+        f"FinanceGuard Alert\n"
+        f"Type: {alert_type}\n"
+        f"Severity: {severity}\n"
+        f"Borrower: {borrower_name}\n"
+        f"Message: {message}\n"
+        f"Timestamp: {timestamp.isoformat()}\n"
+    )
+
+    def _send():
+        with app.app_context():
+            msg = Message(
+                subject=subject,
+                recipients=[admin_email],
+                html=html,
+                body=body,
+            )
+            mail.send(msg)
+
+    await asyncio.to_thread(_send)
+
+
+async def _dispatch_alert_channels(
+    name: str,
+    message: str,
+    severity: str,
+    channel: str,
+    alert_type: str,
+    timestamp: datetime.datetime,
+):
     """
     Simulates multi-channel notification (SMS, Email, Dashboard).
     Each channel is awaited concurrently with asyncio.gather.
@@ -382,6 +566,15 @@ async def _dispatch_alert_channels(name: str, message: str, severity: str, chann
     """
     async def _send(ch: str):
         await asyncio.sleep(0)  # yield; replace with real async I/O
+        if ch.strip().lower() == "email":
+            await _send_admin_alert_email(
+                alert_type=alert_type,
+                severity=severity,
+                borrower_name=name,
+                message=message,
+                timestamp=timestamp,
+            )
+            return
         log.info(f"[{ch}] {severity} -> {name}: {message[:80]}")
 
     await asyncio.gather(*[_send(ch.strip()) for ch in channel.split(",")])
@@ -397,6 +590,7 @@ async def create_alert(
     Writes the alert row to MySQL, then schedules channel dispatch as a
     background task - the HTTP response is NOT held up waiting for it.
     """
+    now = datetime.datetime.now(datetime.timezone.utc)
     session.add(Alert(
         borrower_id   = borrower_id,
         borrower_name = name,
@@ -404,11 +598,11 @@ async def create_alert(
         message       = message,
         severity      = severity,
         channel       = channel,
-        timestamp     = datetime.datetime.now(datetime.timezone.utc),
+        timestamp     = now,
     ))
     # Fire-and-forget: returns immediately, task runs in the background
     asyncio.create_task(
-        _dispatch_alert_channels(name, message, severity, channel)
+        _dispatch_alert_channels(name, message, severity, channel, alert_type, now)
     )
 
 
@@ -551,7 +745,7 @@ async def dashboard():
 
 @app.route("/login")
 async def login_page():
-    return render_template("deshboard/login.html")
+    return render_template("dashboard/index.html")
 
 
 @app.route("/signup")
@@ -615,17 +809,43 @@ async def login():
 
 @app.route("/api/parse-payslip", methods=["POST"])
 async def parse_payslip():
+    def _extract_employee_name(text: str) -> str | None:
+        name_label = r"(?:full\s*name|employee\s*name|name)"
+        stop = r"(?:employee\s*id|employee\s*no|emp\s*id|pay\s*period|department|position|earnings|gross\s*pay|net\s*pay|deductions)"
+        pattern = rf"{name_label}\s*[:\-]\s*([A-Za-z][A-Za-z\s'\.-]*?)(?=\s+(?:{stop})\b|$)"
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            return None
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip()
+        if any(ch.isdigit() for ch in candidate):
+            return None
+        parts = [p for p in candidate.split(" ") if p]
+        if len(parts) < 2:
+            return None
+        return candidate
+
+    def _extract_labeled_text(text: str, labels: list[str]) -> str | None:
+        label = "|".join(labels)
+        pattern = rf"(?:{label})\s*[:\-]\s*([A-Za-z0-9&/().,'\-\s]+?)(?=\s{{2,}}|\n|$)"
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            return None
+        value = re.sub(r"\s+", " ", match.group(1)).strip()
+        return value or None
+
     data     = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"success": False, "error": "Invalid JSON body."}), 400
     text     = data.get("text", "")
     if not isinstance(text, str) or not text.strip():
         return jsonify({"success": False, "error": "Text is required."}), 400
+    employee_name = _extract_employee_name(text)
+    if not employee_name:
+        return jsonify({"success": False, "error": "Could not extract employee name from payslip."}), 422
+    department = _extract_labeled_text(text, ["department", "dept", "division", "unit"])
+    position = _extract_labeled_text(text, ["position", "job\s*title", "role", "designation"])
     patterns = [
-        r"(?:net\s*(?:pay|salary)|take[\s-]?home|gross\s*(?:pay|salary))[^\d]*(\d[\d,\.]+)",
-        r"(?:salary|wage|pay)[^\d]{0,20}(\d[\d,\.]+)",
-        r"\$\s*(\d[\d,\.]+)",
-        r"(\d[\d,\.]+)\s*(?:USD|usd)",
+        r"(?:basic\s*salary|basic\s*pay)[^\d]*(\d[\d,\.]+)",
     ]
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
@@ -633,10 +853,16 @@ async def parse_payslip():
             try:
                 val = float(m.group(1).replace(",", ""))
                 if 50 < val < 100000:
-                    return jsonify({"success": True, "salary": val})
+                    return jsonify({
+                        "success": True,
+                        "salary": val,
+                        "employee_name": employee_name,
+                        "department": department,
+                        "position": position,
+                    })
             except ValueError:
                 pass
-    return jsonify({"success": False, "error": "Could not extract salary."}), 422
+    return jsonify({"success": False, "error": "Could not extract basic salary."}), 422
 
 
 @app.route("/api/alerts")
@@ -700,17 +926,25 @@ async def get_applications():
         size = min(10, max(5, int(request.args.get("size", 10))))
     except (TypeError, ValueError):
         size = 10
+    risk_filter = (request.args.get("risk") or "all").strip().lower()
+    if risk_filter not in {"all", "high", "medium", "low"}:
+        risk_filter = "all"
     offset = (page - 1) * size
     try:
         async with AsyncSessionFactory() as session:
-            result = await session.execute(
+            query = (
                 select(Transaction, Borrower)
                 .join(Borrower, Borrower.id == Transaction.borrower_id, isouter=True)
                 .where(Transaction.type == "assessment")
-                .order_by(desc(Transaction.timestamp))
+            )
+            if risk_filter != "all":
+                query = query.where(func.lower(Transaction.risk_label_after) == risk_filter)
+            query = (
+                query.order_by(desc(Transaction.timestamp))
                 .offset(offset)
                 .limit(size + 1)
             )
+            result = await session.execute(query)
             rows = result.all()
             has_more = len(rows) > size
             payload = []
@@ -731,6 +965,7 @@ async def get_applications():
                 "page": page,
                 "size": size,
                 "has_more": has_more,
+                "risk": risk_filter,
             })
     except Exception:
         log.exception("get_applications() error")
@@ -820,6 +1055,24 @@ async def mark_read():
             return jsonify({"success": True})
     except Exception:
         log.exception("mark_read() DB error")
+        return jsonify({"error": "Database unavailable"}), 503
+
+
+@app.route("/api/alerts/<int:alert_id>/mark-read", methods=["POST"])
+async def mark_single_read(alert_id: int):
+    try:
+        async with AsyncSessionFactory() as session:
+            result = await session.execute(
+                select(Alert).where(Alert.id == alert_id)
+            )
+            alert = result.scalar_one_or_none()
+            if not alert:
+                return jsonify({"error": "Alert not found"}), 404
+            alert.is_read = True
+            await session.commit()
+            return jsonify({"success": True})
+    except Exception:
+        log.exception("mark_single_read() DB error")
         return jsonify({"error": "Database unavailable"}), 503
 
 
@@ -936,6 +1189,9 @@ async def assess():
     last_name      = data['first_name'].split(" ")[1].strip()
     #----------------------------------------------------------------------
     payslip_salary = data['payslip_salary']
+    payslip_name   = (data.get("payslip_name") or "").strip()
+    payslip_department = (data.get("payslip_department") or "").strip()
+    payslip_position = (data.get("payslip_position") or "").strip()
     match_type     = None
 
     if not data:
@@ -970,6 +1226,10 @@ async def assess():
     if not first_name or not last_name:
         return jsonify({"error": "First name and last name are required."}), 400
 
+    full_name = f"{first_name} {last_name}"
+    if payslip_name and not _names_match(payslip_name, full_name):
+        return jsonify({"error": "User name and name from payslip do not match."}), 400
+
     # -- In-memory MFI lookup (instant, no I/O) ---------------
     mfi_row, match_type = lookup_mfi(first_name, last_name)
     if mfi_row:
@@ -985,15 +1245,15 @@ async def assess():
         job = mfi_row.get("Job Title", "Unknown")
         data_source = f"mfi_{match_type}"
     else:
-        inf = infer_from_salary(salary)
-        sec, rea = inf["Employment Sector"], inf["Common Loan Reason"]
-        tr,  al  = inf["Total Previous Loans"], inf["Active Loans"]
-        ob,  am  = inf["Total Outstanding Balance (USD)"], inf["Avg Loan Amount (USD)"]
-        rr,  dp  = inf["Historical Return Rate (%)"], inf["Days Past Due (Max)"]
-        ms       = inf["MFI Diversity Score"]
-        job      = "Unknown"
-        data_source = "salary_inference"
-        match_type = "salary_inference"
+        sec = payslip_department or "Unknown"
+        rea = loan_reason
+        tr,  al  = 0.0, 0.0
+        ob,  am  = 0.0, 0.0
+        rr,  dp  = 100.0, 0.0
+        ms       = 1.0
+        job      = payslip_position or "Unknown"
+        data_source = "user_input"
+        match_type = "user_input"
 
     # -- ML scoring (CPU-bound -> thread pool, non-blocking) ---
     score, label, probs = await score_borrower_async(
@@ -1001,7 +1261,6 @@ async def assess():
         loan_amount
     )
 
-    full_name = f"{first_name} {last_name}"
     now       = datetime.datetime.now(datetime.timezone.utc)
     frequent_window_start = now - datetime.timedelta(days=FREQUENT_APPLICATION_WINDOW_DAYS)
 
@@ -1015,6 +1274,7 @@ async def assess():
             )
             existing = result.scalar_one_or_none()
             recent_assessment_count = 0
+            unsettled_loan_count = 0
 
             if existing:
                 bid = existing.id
@@ -1026,6 +1286,14 @@ async def assess():
                     )
                 )
                 recent_assessment_count = int(result_recent.scalar() or 0)
+                result_approved = await session.execute(
+                    select(func.count(Transaction.id)).where(
+                        Transaction.borrower_id == bid,
+                        Transaction.type == "assessment",
+                        Transaction.status == "approved",
+                    )
+                )
+                unsettled_loan_count = int(result_approved.scalar() or 0)
                 await session.execute(
                     update(Borrower)
                     .where(Borrower.id == bid)
@@ -1067,7 +1335,12 @@ async def assess():
                 is_existing_borrower=bool(existing),
                 recent_application_count=recent_assessment_count + 1,
                 loan_amount=loan_amount,
+                unsettled_loan_count=unsettled_loan_count,
             )
+
+            risk_adjustment = min(20.0, float(unsettled_loan_count) * 8.0)
+            if risk_adjustment > 0:
+                score = min(100.0, score + risk_adjustment)
 
             anomaly_codes = ", ".join(a["code"] for a in anomaly_eval["anomalies"]) if anomaly_eval["anomalies"] else "none"
             decision_status, decision_reason = decide_application(
@@ -1106,7 +1379,7 @@ async def assess():
                 )
                 severity = "CRITICAL" if anomaly_eval["anomaly_score"] >= 40 else "HIGH"
                 await create_alert(session, bid, full_name, "ANOMALY_DETECTED",
-                                   anomaly_msg, severity, "Dashboard")
+                                   anomaly_msg, severity, "Email,Dashboard")
 
             await session.commit()
 

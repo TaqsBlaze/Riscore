@@ -43,6 +43,11 @@
   </div>
 
   <script>
+    const existingUser = localStorage.getItem('financeguard_user');
+    if (existingUser) {
+      window.location = "/dashboard";
+    }
+
     const form = document.getElementById('loginForm');
     const message = document.getElementById('loginMessage');
     form.addEventListener('submit', async (event) => {
@@ -55,6 +60,7 @@
       try {
         const { data } = await axios.post('/api/login', payload);
         console.log(data);
+        localStorage.setItem('financeguard_user', JSON.stringify(data.user));
         message.textContent = `Welcome back, ${data.user.full_name}!`;
         message.classList.remove('text-red-500');
         message.classList.add('text-emerald-600');
