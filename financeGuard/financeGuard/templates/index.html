@@ -295,6 +295,8 @@
         const decisionStatus = ref("");
         const decisionReason = ref("");
         const showRejectionModal = ref(false);
+        const areasPassed = ref([]);
+        const areasFailed = ref([]);
         const theme = ref("light");
 
         const form = reactive({
@@ -402,6 +404,8 @@
         const runAssessment = async () => {
           isAssessing.value = true;
           errorMessage.value = "";
+          areasPassed.value = [];
+          areasFailed.value = [];
           if (!payslipNameMatches.value) {
             errorMessage.value = "User name and name from payslip do not match.";
             isAssessing.value = false;
@@ -434,6 +438,9 @@
             trackingNumber.value = data.tracking_number;
             decisionStatus.value = data.decision_status || "";
             decisionReason.value = data.decision_reason || "";
+            const feedback = data.area_feedback || { passed: [], failed: [] };
+            areasPassed.value = feedback.passed || [];
+            areasFailed.value = feedback.failed || [];
             if (decisionStatus.value === "rejected") {
               showRejectionModal.value = true;
             }
@@ -448,6 +455,8 @@
         const lookupStatus = async () => {
           statusLookup.error = "";
           statusLookup.result = null;
+          areasPassed.value = [];
+          areasFailed.value = [];
           if (!statusLookup.tracking) {
             statusLookup.error = "Tracking number is required.";
             return;
@@ -457,6 +466,9 @@
               `http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`,
             );
             statusLookup.result = data;
+            const feedback = data.area_feedback || { passed: [], failed: [] };
+            areasPassed.value = feedback.passed || [];
+            areasFailed.value = feedback.failed || [];
             if (data?.status === "rejected") {
               decisionReason.value = data?.decision_reason || "";
               showRejectionModal.value = true;

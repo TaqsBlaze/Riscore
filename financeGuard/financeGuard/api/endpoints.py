@@ -443,11 +443,30 @@ def _build_admin_alert_email_html(
     borrower_name: str,
     message: str,
     timestamp: datetime.datetime,
+    area_feedback: dict | None = None,
 ) -> str:
     safe_type = (alert_type or "ALERT").replace("_", " ").title()
     safe_sev = (severity or "INFO").upper()
     badge_color = "#ef4444" if safe_sev in {"CRITICAL", "HIGH"} else "#f59e0b" if safe_sev == "MEDIUM" else "#3b82f6"
     ts = timestamp.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    def _render_section(title: str, entries: list[dict[str, str]]) -> str:
+        if not entries:
+            return ""
+        lines = "".join(
+            f"<li style=\"margin-bottom:4px;\"><span style=\"font-weight:600;\">{entry['title']}</span>: {entry['detail']}</li>"
+            for entry in entries
+        )
+        return f"""
+                <div style="margin-top:16px;padding:12px;border-radius:12px;border:1px solid #e2e8f0;background:#f8fafc;">
+                  <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:6px;">{title}</div>
+                  <ul style="margin:0;padding-left:16px;font-size:13px;color:#334155;line-height:1.6;">
+                    {lines}
+                  </ul>
+                </div>
+        """
+    failed_entries = area_feedback.get("failed", []) if area_feedback else []
+    passed_entries = area_feedback.get("passed", []) if area_feedback else []
+    areas_html = _render_section("Failed areas", failed_entries) + _render_section("Passed areas", passed_entries)
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -472,6 +491,7 @@ def _build_admin_alert_email_html(
               <td style="padding:28px 32px;">
                 <p style="margin:0 0 12px;font-size:16px;font-weight:600;">Borrower: {borrower_name}</p>
                 <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#475569;">{message}</p>
+                {areas_html}
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                   <tr>
                     <td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;">
@@ -507,6 +527,7 @@ async def _send_admin_alert_email(
     borrower_name: str,
     message: str,
     timestamp: datetime.datetime,
+    area_feedback: dict | None = None,
 ):
     admin_email = (
         os.getenv("ADMIN_ALERT_EMAIL")
@@ -528,6 +549,7 @@ async def _send_admin_alert_email(
         borrower_name=borrower_name,
         message=message,
         timestamp=timestamp,
+        area_feedback=area_feedback,
     )
     body = (
         f"FinanceGuard Alert\n"
@@ -537,6 +559,13 @@ async def _send_admin_alert_email(
         f"Message: {message}\n"
         f"Timestamp: {timestamp.isoformat()}\n"
     )
+    if area_feedback:
+        failed_titles = ", ".join(entry["title"] for entry in area_feedback.get("failed", []))
+        passed_titles = ", ".join(entry["title"] for entry in area_feedback.get("passed", []))
+        if failed_titles:
+            body += f"Failed Areas: {failed_titles}\n"
+        if passed_titles:
+            body += f"Passed Areas: {passed_titles}\n"
 
     def _send():
         with app.app_context():
@@ -558,6 +587,7 @@ async def _dispatch_alert_channels(
     channel: str,
     alert_type: str,
     timestamp: datetime.datetime,
+    area_feedback: dict | None = None,
 ):
     """
     Simulates multi-channel notification (SMS, Email, Dashboard).
@@ -573,6 +603,7 @@ async def _dispatch_alert_channels(
                 borrower_name=name,
                 message=message,
                 timestamp=timestamp,
+                area_feedback=area_feedback,
             )
             return
         log.info(f"[{ch}] {severity} -> {name}: {message[:80]}")
@@ -585,6 +616,7 @@ async def create_alert(
     borrower_id: str, name: str,
     alert_type: str, message: str,
     severity: str, channel: str = "Dashboard",
+    area_feedback: dict | None = None,
 ):
     """
     Writes the alert row to MySQL, then schedules channel dispatch as a
@@ -602,7 +634,7 @@ async def create_alert(
     ))
     # Fire-and-forget: returns immediately, task runs in the background
     asyncio.create_task(
-        _dispatch_alert_channels(name, message, severity, channel, alert_type, now)
+        _dispatch_alert_channels(name, message, severity, channel, alert_type, now, area_feedback=area_feedback)
     )
 
 
@@ -1230,6 +1262,15 @@ async def assess():
     if payslip_name and not _names_match(payslip_name, full_name):
         return jsonify({"error": "User name and name from payslip do not match."}), 400
 
+    existing_borrower_id = None
+    async with AsyncSessionFactory() as check_session:
+        result_existing = await check_session.execute(
+            select(Borrower.id).where(
+                func.lower(Borrower.full_name) == full_name.lower()
+            )
+        )
+        existing_borrower_id = result_existing.scalar_one_or_none()
+
     # -- In-memory MFI lookup (instant, no I/O) ---------------
     mfi_row, match_type = lookup_mfi(first_name, last_name)
     if mfi_row:
@@ -1255,6 +1296,12 @@ async def assess():
         data_source = "user_input"
         match_type = "user_input"
 
+    if existing_borrower_id is None:
+        tr, al = 0.0, 0.0
+
+    if existing_borrower_id is None:
+        tr, al = 0.0, 0.0
+
     # -- ML scoring (CPU-bound -> thread pool, non-blocking) ---
     score, label, probs = await score_borrower_async(
         salary, sec, loan_reason, tr, al, ob, am, rr, dp, ms,
@@ -1267,17 +1314,11 @@ async def assess():
     # -- Persist to MySQL (async DB I/O) ----------------------
     try:
         async with AsyncSessionFactory() as session:
-            result   = await session.execute(
-                select(Borrower).where(
-                    func.lower(Borrower.full_name) == full_name.lower()
-                )
-            )
-            existing = result.scalar_one_or_none()
             recent_assessment_count = 0
             unsettled_loan_count = 0
 
-            if existing:
-                bid = existing.id
+            if existing_borrower_id:
+                bid = existing_borrower_id
                 result_recent = await session.execute(
                     select(func.count(Transaction.id)).where(
                         Transaction.borrower_id == bid,
@@ -1332,7 +1373,7 @@ async def assess():
                 outstanding=ob,
                 return_rate=rr,
                 days_due=dp,
-                is_existing_borrower=bool(existing),
+                is_existing_borrower=bool(existing_borrower_id),
                 recent_application_count=recent_assessment_count + 1,
                 loan_amount=loan_amount,
                 unsettled_loan_count=unsettled_loan_count,
@@ -1349,7 +1390,7 @@ async def assess():
                 anomaly_score=anomaly_eval["anomaly_score"],
                 anomaly_codes=anomaly_codes,
             )
-            tracking_number = _generate_tracking_number()
+            tracking_number = _generate_tracking_number() if decision_status != "rejected" else None
             session.add(Transaction(
                 borrower_id=bid, type="assessment", amount=loan_amount,
                 description=decision_reason,
@@ -1365,12 +1406,14 @@ async def assess():
                 msg = (f"{full_name} assessed as HIGH RISK "
                        f"(score {score:.1f}/100). Immediate review recommended.")
                 await create_alert(session, bid, full_name, "HIGH_RISK",
-                                   msg, "CRITICAL", "SMS,Email,Dashboard")
+                                   msg, "CRITICAL", "SMS,Email,Dashboard",
+                                   area_feedback=area_feedback)
             elif label == "Medium":
                 msg = (f"{full_name} scored MEDIUM RISK "
                        f"({score:.1f}/100). Enhanced monitoring advised.")
                 await create_alert(session, bid, full_name, "MEDIUM_RISK",
-                                   msg, "HIGH", "Dashboard")
+                                   msg, "HIGH", "Dashboard",
+                                   area_feedback=area_feedback)
 
             if anomaly_eval["is_anomaly"]:
                 anomaly_msg = (
@@ -1379,7 +1422,8 @@ async def assess():
                 )
                 severity = "CRITICAL" if anomaly_eval["anomaly_score"] >= 40 else "HIGH"
                 await create_alert(session, bid, full_name, "ANOMALY_DETECTED",
-                                   anomaly_msg, severity, "Email,Dashboard")
+                                   anomaly_msg, severity, "Email,Dashboard",
+                                   area_feedback=area_feedback)
 
             await session.commit()
 
