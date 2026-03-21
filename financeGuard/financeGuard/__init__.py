@@ -54,7 +54,7 @@ app.config['MAIL_USERNAME'] = 'noreply@my-domain.co.zw'
 app.config['MAIL_PASSWORD'] = '********'
 app.config['MAIL_DEFAULT_SENDER'] = ('Alert', 'noreply@my-domain.co.zw')
 app.config['ADMIN_ALERT_EMAIL'] = os.getenv("ADMIN_ALERT_EMAIL", "")
-
+app.config['MIMETYPE'] = {'.mjs':'application/javascript'}
 app.config['MODEL_PATH'] = "financeGuard/model/risk_model.pkl"
 app.config['LABEL_ENCODER_PATH'] = "financeGuard/model/label_encoder.pkl"
 app.config['FEATURE_COLS_PATH'] = "financeGuard/model/feature_cols.pkl"

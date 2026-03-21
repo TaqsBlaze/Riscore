@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import jsonify, render_template, request, url_for
+from flask import jsonify, render_template, request, url_for, send_file
 from financeGuard.auth.token import token_required
 from financeGuard import app, db, mail
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -762,6 +762,11 @@ async def seed_data():
 
 
 
+@app.route("/static/js/pdf.min.mjs")
+def serve_file():
+
+    return send_file('static/js/pdf.min.mjs', mmimetype='application/javascript')
+
 @app.route("/")
 async def index():
     try:
@@ -1295,9 +1300,6 @@ async def assess():
         job      = payslip_position or "Unknown"
         data_source = "user_input"
         match_type = "user_input"
-
-    if existing_borrower_id is None:
-        tr, al = 0.0, 0.0
 
     if existing_borrower_id is None:
         tr, al = 0.0, 0.0
