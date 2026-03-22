@@ -8,4 +8,4 @@ if __name__ == '__main__':
     asyncio.run(ensure_db_ready())
 
     log.info("Starting FinanceGuard v2 -> http://127.0.0.1:5000")
-    app.run()
+    app.run(degub=True)

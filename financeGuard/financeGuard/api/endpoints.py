@@ -765,7 +765,7 @@ async def seed_data():
 @app.route("/static/js/pdf.min.mjs")
 def serve_file():
 
-    return send_file('static/js/pdf.min.mjs', mmimetype='application/javascript')
+    return send_file('static/js/pdf.min.mjs', mimetype='application/javascript')
 
 @app.route("/")
 async def index():
