@@ -6,7 +6,7 @@ from financeGuard import app, db, mail
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean,
-    DateTime, Text, func, select, update, desc, asc
+    DateTime, Text, func, select, update, desc, asc, or_
 )
 import os, asyncio, random, datetime, pickle, re, uuid, logging
 from concurrent.futures import ThreadPoolExecutor
@@ -55,7 +55,13 @@ async def backfill_missing_tracking_numbers(*, batch_size: int = 500) -> int:
         async with AsyncSessionFactory() as session:
             result = await session.execute(
                 select(Transaction)
-                .where(Transaction.tracking_number.is_(None))
+                .where(
+                    Transaction.tracking_number.is_(None),
+                    or_(
+                        Transaction.status != "rejected",
+                        Transaction.status.is_(None),
+                    ),
+                )
                 .limit(batch_size)
             )
             rows = result.scalars().all()
@@ -380,6 +386,175 @@ def _format_rejection_reason(*, score: float, label: str, anomaly_codes: list[st
     return "Rejected: risk assessment did not meet approval requirements."
 
 
+def _format_currency(value: float) -> str:
+    try:
+        return f"${value:,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _calc_debt_to_income(context: dict[str, float]) -> float:
+    return float(context.get("outstanding", 0.0)) / max(float(context.get("salary", 1.0)), 1.0)
+
+
+def _calc_request_ratio(context: dict[str, float]) -> float:
+    return float(context.get("loan_amount", 0.0)) / max(float(context.get("salary", 1.0)), 1.0)
+
+
+def _pass_detail_active_debt(context: dict[str, float]) -> str:
+    loans = int(context.get("active_loans", 0))
+    outstanding = _format_currency(float(context.get("outstanding", 0.0)))
+    return f"Active loans: {loans}; outstanding balance {outstanding}"
+
+
+def _pass_detail_frequency(context: dict[str, float]) -> str:
+    count = int(context.get("recent_application_count", 0))
+    return (
+        f"{count} application(s) in the last {FREQUENT_APPLICATION_WINDOW_DAYS} days"
+        f" (threshold {FREQUENT_APPLICATION_THRESHOLD})"
+    )
+
+
+def _pass_detail_unsettled_prior(context: dict[str, float]) -> str:
+    count = int(context.get("unsettled_loan_count", 0))
+    return f"{count} unsettled prior loan(s) on record"
+
+
+def _pass_detail_history(context: dict[str, float]) -> str:
+    total = int(context.get("total_loans", 0))
+    active = int(context.get("active_loans", 0))
+    if context.get("is_existing_borrower"):
+        return f"Existing borrower history ({total} previous loans, {active} active)"
+    return f"Borrowing history data present ({total} previous loans, {active} active)"
+
+
+def _pass_detail_debt_to_income(context: dict[str, float]) -> str:
+    ratio = _calc_debt_to_income(context)
+    return f"Debt-to-income ratio {ratio:.2f}"
+
+
+def _pass_detail_return_rate(context: dict[str, float]) -> str:
+    return f"Historical return rate {float(context.get('return_rate', 0.0)):.1f}%"
+
+
+def _pass_detail_past_due(context: dict[str, float]) -> str:
+    days = int(context.get("days_due", 0))
+    return f"Longest past due period {days} day(s)"
+
+
+def _pass_detail_requested_amount(context: dict[str, float]) -> str:
+    ratio = _calc_request_ratio(context)
+    return f"Requested amount {ratio:.1f}x monthly salary"
+
+
+AREA_FEEDBACK_DEFINITIONS = [
+    {
+        "code": "OUTSTANDING_ACTIVE_LOAN",
+        "title": "Active debt",
+        "pass_detail": _pass_detail_active_debt,
+    },
+    {
+        "code": "FREQUENT_LOAN_APPLICATIONS",
+        "title": "Application frequency",
+        "pass_detail": _pass_detail_frequency,
+    },
+    {
+        "code": "UNSETTLED_PRIOR_LOAN",
+        "title": "Unsettled prior loans",
+        "pass_detail": _pass_detail_unsettled_prior,
+    },
+    {
+        "code": "NEW_USER_NO_HISTORY",
+        "title": "Borrowing history",
+        "pass_detail": _pass_detail_history,
+    },
+    {
+        "code": "HIGH_DEBT_TO_INCOME",
+        "title": "Debt-to-income",
+        "pass_detail": _pass_detail_debt_to_income,
+    },
+    {
+        "code": "LOW_REPAYMENT_RATE",
+        "title": "Repayment history",
+        "pass_detail": _pass_detail_return_rate,
+    },
+    {
+        "code": "SEVERE_PAST_DUE",
+        "title": "Delinquency",
+        "pass_detail": _pass_detail_past_due,
+    },
+    {
+        "code": "HIGH_REQUESTED_AMOUNT",
+        "title": "Loan request",
+        "pass_detail": _pass_detail_requested_amount,
+    },
+]
+
+AREA_FEEDBACK_ORDER = [entry["code"] for entry in AREA_FEEDBACK_DEFINITIONS]
+AREA_FEEDBACK_MAP = {entry["code"]: entry for entry in AREA_FEEDBACK_DEFINITIONS}
+
+
+def _build_area_feedback(
+    *,
+    anomalies: list[dict],
+    context: dict[str, float],
+    label: str,
+    score: float,
+) -> dict[str, list[dict[str, str]]]:
+    failed_entries = []
+    seen_codes = {anomaly["code"] for anomaly in anomalies}
+    for anomaly in anomalies:
+        spec = AREA_FEEDBACK_MAP.get(anomaly["code"])
+        title = spec["title"] if spec else anomaly["code"].replace("_", " ").title()
+        failed_entries.append(
+            {"title": title, "detail": anomaly["description"]}
+        )
+    if (label or "").lower() == "high":
+        failed_entries.append(
+            {
+                "title": "Risk label",
+                "detail": f"Score {score:.1f}/100 classified as High risk",
+            }
+        )
+    passed_entries = []
+    for code in AREA_FEEDBACK_ORDER:
+        if code in seen_codes:
+            continue
+        spec = AREA_FEEDBACK_MAP[code]
+        passed_entries.append(
+            {"title": spec["title"], "detail": spec["pass_detail"](context)}
+        )
+    return {"failed": failed_entries, "passed": passed_entries}
+
+
+def _join_area_entries(entries: list[dict[str, str]]) -> str:
+    return "; ".join(f"{entry['title']}: {entry['detail']}" for entry in entries)
+
+
+def _format_area_summary(area_feedback: dict[str, list[dict[str, str]]]) -> str:
+    if not area_feedback:
+        return ""
+    failed = area_feedback.get("failed", [])
+    passed = area_feedback.get("passed", [])
+    sections = []
+    if failed:
+        sections.append(f"Failed areas: {_join_area_entries(failed)}.")
+    else:
+        sections.append("Failed areas: none.")
+    if passed:
+        sections.append(f"Passed areas: {_join_area_entries(passed)}.")
+    else:
+        sections.append("Passed areas: none.")
+    return " ".join(sections)
+
+
+def _append_area_summary(message: str, area_feedback: dict[str, list[dict[str, str]]]) -> str:
+    summary = _format_area_summary(area_feedback)
+    if not summary:
+        return message
+    return f"{message.rstrip()} {summary}"
+
+
 def decide_application(*, score: float, label: str, anomaly_score: float, anomaly_codes: str) -> tuple[str, str]:
     """
     Automatic loan decisioning:
@@ -398,6 +573,25 @@ def decide_application(*, score: float, label: str, anomaly_score: float, anomal
         "approved",
         f"Approved automatically based on {safe_label.lower() or 'low'} risk score {score:.1f}."
     )
+
+
+def _format_area_entries(entries: list[dict[str, str]]) -> str:
+    if not entries:
+        return ""
+    return "\n".join(f"• {entry['title']}: {entry['detail']}" for entry in entries)
+
+
+def _format_user_area_message(area_feedback: dict[str, list[dict[str, str]]]) -> str:
+    if not area_feedback:
+        return ""
+    sections: list[str] = []
+    failed = area_feedback.get("failed") or []
+    passed = area_feedback.get("passed") or []
+    if failed:
+        sections.append("Areas needing attention:\n" + _format_area_entries(failed))
+    if passed:
+        sections.append("Areas you met expectations:\n" + _format_area_entries(passed))
+    return "\n\n".join(sections).strip()
 
 
 # --------------------------------------------------------------
@@ -560,12 +754,16 @@ async def _send_admin_alert_email(
         f"Timestamp: {timestamp.isoformat()}\n"
     )
     if area_feedback:
-        failed_titles = ", ".join(entry["title"] for entry in area_feedback.get("failed", []))
-        passed_titles = ", ".join(entry["title"] for entry in area_feedback.get("passed", []))
-        if failed_titles:
-            body += f"Failed Areas: {failed_titles}\n"
-        if passed_titles:
-            body += f"Passed Areas: {passed_titles}\n"
+        failed_entries = area_feedback.get("failed", [])
+        passed_entries = area_feedback.get("passed", [])
+        if failed_entries:
+            body += "Failed Areas:\n"
+            for entry in failed_entries:
+                body += f"  - {entry['title']}: {entry['detail']}\n"
+        if passed_entries:
+            body += "Passed Areas:\n"
+            for entry in passed_entries:
+                body += f"  - {entry['title']}: {entry['detail']}\n"
 
     def _send():
         with app.app_context():
@@ -688,7 +886,7 @@ async def seed_data():
                 anomaly_codes=anomaly_codes,
             )
             bid = f"S{i+1:03d}"
-            tracking_number = str(uuid.uuid4())
+            tracking_number = str(uuid.uuid4()) if status != "rejected" else None
             session.add(Borrower(
                 id=bid, full_name=row["Full Name"], first_name=first, last_name=last,
                 salary=sal, employment_sector=sec, job_title=row["Job Title"],
@@ -1301,8 +1499,11 @@ async def assess():
         data_source = "user_input"
         match_type = "user_input"
 
-    if existing_borrower_id is None:
+    borrower_exists = existing_borrower_id is not None
+    if not borrower_exists:
         tr, al = 0.0, 0.0
+    db_total_loans = tr if borrower_exists else 0.0
+    db_active_loans = al if borrower_exists else 0.0
 
     # -- ML scoring (CPU-bound -> thread pool, non-blocking) ---
     score, label, probs = await score_borrower_async(
@@ -1314,6 +1515,7 @@ async def assess():
     frequent_window_start = now - datetime.timedelta(days=FREQUENT_APPLICATION_WINDOW_DAYS)
 
     # -- Persist to MySQL (async DB I/O) ----------------------
+    area_feedback: dict[str, list[dict[str, str]]] = {"failed": [], "passed": []}
     try:
         async with AsyncSessionFactory() as session:
             recent_assessment_count = 0
@@ -1357,7 +1559,7 @@ async def assess():
                 session.add(Borrower(
                     id=bid, full_name=full_name, first_name=first_name, last_name=last_name,
                     salary=salary, employment_sector=sec, job_title=job,
-                    total_prev_loans=tr, active_loans=al, outstanding_balance=ob,
+                    total_prev_loans=db_total_loans, active_loans=db_active_loans, outstanding_balance=ob,
                     avg_loan_amount=am, common_loan_reason=loan_reason, return_rate=rr,
                     days_past_due=dp, mfi_diversity_score=ms,
                     risk_score=score, risk_label=label,
@@ -1368,6 +1570,7 @@ async def assess():
                     data_source=data_source, created_at=now,
                 ))
 
+            recent_application_window = recent_assessment_count + 1
             anomaly_eval = evaluate_application_anomalies(
                 salary=salary,
                 total_loans=tr,
@@ -1376,7 +1579,7 @@ async def assess():
                 return_rate=rr,
                 days_due=dp,
                 is_existing_borrower=bool(existing_borrower_id),
-                recent_application_count=recent_assessment_count + 1,
+                recent_application_count=recent_application_window,
                 loan_amount=loan_amount,
                 unsettled_loan_count=unsettled_loan_count,
             )
@@ -1385,6 +1588,25 @@ async def assess():
             if risk_adjustment > 0:
                 score = min(100.0, score + risk_adjustment)
 
+            area_context = {
+                "salary": salary,
+                "loan_amount": loan_amount,
+                "total_loans": tr,
+                "active_loans": al,
+                "outstanding": ob,
+                "return_rate": rr,
+                "days_due": dp,
+                "recent_application_count": recent_application_window,
+                "unsettled_loan_count": unsettled_loan_count,
+                "is_existing_borrower": bool(existing_borrower_id),
+            }
+            area_feedback = _build_area_feedback(
+                anomalies=anomaly_eval["anomalies"],
+                context=area_context,
+                label=label,
+                score=score,
+            )
+
             anomaly_codes = ", ".join(a["code"] for a in anomaly_eval["anomalies"]) if anomaly_eval["anomalies"] else "none"
             decision_status, decision_reason = decide_application(
                 score=score,
@@ -1392,7 +1614,7 @@ async def assess():
                 anomaly_score=anomaly_eval["anomaly_score"],
                 anomaly_codes=anomaly_codes,
             )
-            tracking_number = _generate_tracking_number() if decision_status != "rejected" else None
+            tracking_number = _generate_tracking_number() if decision_status == "approved" else None
             session.add(Transaction(
                 borrower_id=bid, type="assessment", amount=loan_amount,
                 description=decision_reason,
@@ -1407,12 +1629,14 @@ async def assess():
             if label == "High":
                 msg = (f"{full_name} assessed as HIGH RISK "
                        f"(score {score:.1f}/100). Immediate review recommended.")
+                msg = _append_area_summary(msg, area_feedback)
                 await create_alert(session, bid, full_name, "HIGH_RISK",
                                    msg, "CRITICAL", "SMS,Email,Dashboard",
                                    area_feedback=area_feedback)
             elif label == "Medium":
                 msg = (f"{full_name} scored MEDIUM RISK "
                        f"({score:.1f}/100). Enhanced monitoring advised.")
+                msg = _append_area_summary(msg, area_feedback)
                 await create_alert(session, bid, full_name, "MEDIUM_RISK",
                                    msg, "HIGH", "Dashboard",
                                    area_feedback=area_feedback)
@@ -1422,6 +1646,7 @@ async def assess():
                     f"{full_name} triggered {len(anomaly_eval['anomalies'])} anomaly checks "
                     f"(score {anomaly_eval['anomaly_score']:.1f}/100): {anomaly_codes}."
                 )
+                anomaly_msg = _append_area_summary(anomaly_msg, area_feedback)
                 severity = "CRITICAL" if anomaly_eval["anomaly_score"] >= 40 else "HIGH"
                 await create_alert(session, bid, full_name, "ANOMALY_DETECTED",
                                    anomaly_msg, severity, "Email,Dashboard",
@@ -1433,6 +1658,11 @@ async def assess():
         log.exception("assess() DB error")
         return jsonify({"error": "Database unavailable"}), 503
 
+    decision_reason_base = decision_reason
+    user_feedback_message = _format_user_area_message(area_feedback)
+    if decision_status == "rejected" and user_feedback_message:
+        decision_reason = f"{decision_reason_base}\n\n{user_feedback_message}"
+
     return jsonify({
         "success":       True,
         "borrower_id":   bid,
@@ -1443,12 +1673,19 @@ async def assess():
         "tracking_number": tracking_number,
         "decision_status": decision_status,
         "decision_reason": decision_reason,
+        "decision_reason_base": decision_reason_base,
+        "decision_feedback": {
+            "message": user_feedback_message,
+            "failed": area_feedback.get("failed", []),
+            "passed": area_feedback.get("passed", []),
+        },
         "risk_score":    score,
         "risk_label":    label,
         "probabilities": {k: round(v * 100, 1) for k, v in probs.items()},
         "data_source":   data_source,
         "match_type":    match_type,
         "anomaly_detection": anomaly_eval,
+        "area_feedback": area_feedback,
         "mfi_details": {
             "employment_sector": sec,
             "job_title":         job,
