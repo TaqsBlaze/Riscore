@@ -1,0 +1,423 @@
+﻿{% extends "layout.html" %}
+
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-1">
+  <section
+    class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <h2 class="text-base font-semibold">Application Form</h2>
+    <p class="mt-1 text-sm text-neutral-500">
+      Provide your details to receive a risk score.
+    </p>
+
+    <div class="mt-6 space-y-4">
+      <div>
+        <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Full name</label>
+        <input v-model="form.name" type="text" placeholder="e.g. Jane Doe"
+          class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+      </div>
+      <div>
+        <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Loan amount requested
+          (USD)</label>
+        <input v-model.number="form.amount" type="number" placeholder="5000"
+          class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+      </div>
+      <div>
+        <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Reason for loan</label>
+        <input v-model="form.reason" type="text" placeholder="e.g. Home improvement"
+          class="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+      </div>
+      <div>
+        <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">Payslip upload</label>
+        <div
+          class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
+          <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.fileInput.click()">
+            Upload payslip
+          </button>
+          <div class="mt-2 text-xs" v-if="selectedFile">
+            Selected: [[selectedFile.name ]]
+          </div>
+          <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden"
+            accept=".pdf,.txt,.png,.jpg,.jpeg" />
+        </div>
+        <p class="mt-2 text-xs text-neutral-400">
+          We extract monthly pay information straight from your payslip.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs font-medium uppercase tracking-wider text-neutral-500">National ID KYC</label>
+        <div
+          class="mt-2 rounded-xl border border-dashed border-neutral-300 p-4 text-center text-sm text-neutral-500 dark:border-neutral-700">
+          <button class="text-neutral-900 dark:text-neutral-100" @click="$refs.idInput.click()">
+            Upload national ID
+          </button>
+          <div class="mt-2 text-xs" v-if="selectedIdFile">
+            Selected: [[ selectedIdFile.name ]]
+          </div>
+          <input type="file" ref="idInput" @change="handleIdUpload" class="hidden"
+            accept=".png,.jpg,.jpeg" />
+        </div>
+        <p class="mt-2 text-xs text-neutral-400">
+          We run OCR to read your National ID number.
+        </p>
+      </div>
+      <div v-if="idProcessing" class="text-xs text-neutral-500">
+        Extracting ID number from National ID...
+      </div>
+      <div v-if="idNumber" class="text-xs text-neutral-500">
+        ID number detected: <span class="font-semibold">[[ idNumber ]]</span>
+      </div>
+      <div v-if="form.salary" class="text-sm font-semibold text-emerald-600">
+        Detected net pay: $[[ form.salary.toFixed(2) ]]
+      </div>
+      <div v-if="payslipNationalId" class="mt-1 text-xs text-neutral-500">
+        Payslip national ID: <span class="font-semibold">[[ payslipNationalId ]]</span>
+      </div>
+      <div v-if="payslipName" class="mt-1 text-xs text-neutral-500">
+        Payslip name: <span class="font-semibold">[[ payslipName ]]</span>
+      </div>
+      <div v-if="payslipDepartment" class="mt-1 text-xs text-neutral-500">
+        Department: <span class="font-semibold">[[ payslipDepartment ]]</span>
+      </div>
+      <div v-if="payslipPosition" class="mt-1 text-xs text-neutral-500">
+        Position: <span class="font-semibold">[[ payslipPosition ]]</span>
+      </div>
+      <p v-if="nameMismatchMessage" class="text-sm text-red-500">
+        [[ nameMismatchMessage ]]
+      </p>
+      <p v-if="idNumberMismatchMessage" class="text-sm text-red-500">
+        [[ idNumberMismatchMessage ]]
+      </p>
+      <button
+        class="mt-2 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        :disabled="isAssessing || !isFormValid" @click="runAssessment">
+        [[isAssessing ? 'Analyzing...' : 'Apply' ]]
+      </button>
+
+      <p v-if="errorMessage" class="text-sm text-red-500">
+        [[errorMessage ]]
+      </p>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="/static/js/zw-id-ocr.js"></script>
+<script>
+  const { createApp, ref, reactive, computed, onMounted } = Vue;
+
+  createApp({
+    setup() {
+      const selectedFile = ref(null);
+      const selectedIdFile = ref(null);
+      const idProcessing = ref(false);
+      const idNumber = ref("");
+      const idErrorMessage = ref("");
+      const payslipName = ref("");
+      const payslipDepartment = ref("");
+      const payslipPosition = ref("");
+      const payslipNationalId = ref("");
+      const isAssessing = ref(false);
+      const errorMessage = ref("");
+      const trackingNumber = ref(null);
+      const theme = ref("light");
+
+      const form = reactive({
+        name: "",
+        amount: null,
+        reason: "",
+        salary: null,
+      });
+
+      const normalizeName = ZwIdOcr.normalizeName;
+      const normalizeIdDigits = (value) => (value || "").toString().replace(/\D/g, "");
+
+      const payslipNameMatches = computed(() => {
+        if (!payslipName.value) return true;
+        if (!form.name.trim()) return true;
+        return normalizeName(payslipName.value) === normalizeName(form.name);
+      });
+
+      const nameMismatchMessage = computed(() =>
+        payslipName.value && !payslipNameMatches.value
+          ? "User name and name from payslip do not match."
+          : ""
+      );
+
+      const payslipIdMatches = computed(() => {
+        if (!payslipNationalId.value || !idNumber.value) return true;
+        return normalizeIdDigits(payslipNationalId.value) === normalizeIdDigits(idNumber.value);
+      });
+
+      const idNumberMismatchMessage = computed(() =>
+        payslipNationalId.value && idNumber.value && !payslipIdMatches.value
+          ? "Payslip ID number and uploaded National ID do not match."
+          : ""
+      );
+
+      const isFormValid = computed(() => {
+        const nameParts = form.name.trim().split(/\s+/).filter(Boolean);
+        const basicInfo =
+          form.name.trim().length > 2 &&
+          nameParts.length >= 2 &&
+          form.amount > 0 &&
+          form.reason.trim().length > 0;
+        return (
+          basicInfo &&
+          form.salary > 0 &&
+          selectedFile.value &&
+          payslipNameMatches.value &&
+          selectedIdFile.value &&
+          idNumber.value &&
+          payslipNationalId.value &&
+          payslipIdMatches.value &&
+          !idProcessing.value
+        );
+      });
+
+      const parseCurrency = (value) => {
+        if (value == null) return null;
+        if (typeof value === "number") return value;
+        const cleaned = value.toString().replace(/,/g, "").replace(/[^\d.]/g, "");
+        const parsed = parseFloat(cleaned);
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+
+      const extractTextFromPdf = async (file) => {
+        let pdfjsLib;
+        try {
+          pdfjsLib = await import("http://localhost:5000/static/js/pdf.min.mjs");
+          pdfjsLib.GlobalWorkerOptions.workerSrc = "http://localhost:5000/static/js/pdf.worker.min.mjs";
+        } catch (error) {
+          throw new Error("Unable to load PDF reader.");
+        }
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const pageText = content.items.map((item) => item.str).join(" ");
+          fullText += pageText + "\n";
+        }
+        return fullText;
+      };
+
+      const handleFileUpload = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        selectedFile.value = file;
+        form.salary = null;
+        errorMessage.value = "";
+        try {
+          let text;
+          if (file.type === "application/pdf") {
+            text = await extractTextFromPdf(file);
+          } else {
+            text = await file.text();
+          }
+          const { data } = await axios.post(
+            "http://localhost:5000/api/parse-payslip",
+            { text },
+            {
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+          const rawNetPay = data.net_pay ?? data.salary;
+          form.salary = parseCurrency(rawNetPay);
+          payslipName.value = data.employee_name || "";
+          payslipDepartment.value = data.department || "";
+          payslipPosition.value = data.position || "";
+          payslipNationalId.value = data.national_id || "";
+          if (!payslipNameMatches.value) {
+            errorMessage.value = "User name and name from payslip do not match.";
+          } else {
+            errorMessage.value = "";
+          }
+        } catch (err) {
+          form.salary = null;
+          payslipName.value = "";
+          payslipDepartment.value = "";
+          payslipPosition.value = "";
+          payslipNationalId.value = "";
+          errorMessage.value =
+            err?.response?.data?.error ||
+            "Unable to extract payroll data from that file.";
+        }
+      };
+
+      const extractIdNumberFromText = (rawText) => {
+        const normalized = (rawText || "").replace(/\r/g, "\n");
+        const patterns = [
+          /(?:national\s*id|identity\s*number|id\s*(?:number|no))\s*[:\-]?\s*([\d\s-]{6,20})/i,
+          /\b(\d{2}[-\s]?\d{7,8})\b/,
+          /\b(\d{9,12})\b/,
+        ];
+        for (const pattern of patterns) {
+          const match = normalized.match(pattern);
+          if (match && match[1]) {
+            const cleaned = match[1].replace(/[^\d]/g, "");
+            if (cleaned.length >= 6 && cleaned.length <= 13) {
+              return cleaned;
+            }
+          }
+        }
+        return "";
+      };
+
+      const handleIdUpload = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        selectedIdFile.value = file;
+        idNumber.value = "";
+        idErrorMessage.value = "";
+        idProcessing.value = true;
+        try {
+          if (typeof ZwIdOcr === "undefined") {
+            throw new Error("ZwIdOcr library unavailable.");
+          }
+          const result = await ZwIdOcr.extractNameFromFile(file);
+          console.log(result);
+          const extractedIdNumber = extractIdNumberFromText(result.rawText);
+          if (!extractedIdNumber) {
+            idErrorMessage.value = "Unable to detect an ID number on the National ID.";
+            idNumber.value = "";
+          } else {
+            idErrorMessage.value = "";
+            idNumber.value = extractedIdNumber;
+          }
+        } catch (err) {
+          idErrorMessage.value = "Unable to read that National ID image.";
+          idNumber.value = "";
+        } finally {
+          idProcessing.value = false;
+        }
+      };
+
+      const runAssessment = async () => {
+        isAssessing.value = true;
+        errorMessage.value = "";
+        if (!payslipNameMatches.value) {
+          errorMessage.value = "User name and name from payslip do not match.";
+          isAssessing.value = false;
+          return;
+        }
+        if (form.name.trim().split(/\s+/).filter(Boolean).length < 2) {
+          errorMessage.value = "Please enter both first and last name.";
+          isAssessing.value = false;
+          return;
+        }
+        if (!idNumber.value) {
+          errorMessage.value = "Unable to read an ID number from the National ID.";
+          isAssessing.value = false;
+          return;
+        }
+        if (!payslipNationalId.value) {
+          errorMessage.value = "Payslip ID number is required.";
+          isAssessing.value = false;
+          return;
+        }
+        if (!payslipIdMatches.value) {
+          errorMessage.value = "Payslip and National ID numbers do not match.";
+          isAssessing.value = false;
+          return;
+        }
+        try {
+          const fullName = form.name.trim();
+
+          const payload = {
+            first_name: fullName,
+            last_name: "",
+            amount: form.amount,
+            reason: form.reason.trim(),
+            payslip_salary: form.salary,
+            payslip_name: payslipName.value,
+            payslip_department: payslipDepartment.value,
+            payslip_position: payslipPosition.value,
+            national_id_number: idNumber.value,
+          };
+
+          const { data } = await axios.post(
+            "http://localhost:5000/api/assess",
+            payload,
+            {
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+
+          trackingNumber.value = data.tracking_number;
+          const feedback = data.area_feedback || data.decision_feedback || { passed: [], failed: [] };
+          const snapshot = {
+            assessed_at: new Date().toISOString(),
+            full_name: fullName,
+            risk_score: data.risk_score,
+            risk_label: data.risk_label,
+            tracking_number: data.tracking_number,
+            decision_status: data.decision_status,
+            decision_reason: data.decision_reason,
+            area_feedback: feedback,
+          };
+          localStorage.setItem("financeGuard.lastAssessment", JSON.stringify(snapshot));
+          window.location.href = "/risk-score";
+        } catch (err) {
+          errorMessage.value =
+            err?.response?.data?.error || "Unable to process assessment.";
+        } finally {
+          isAssessing.value = false;
+        }
+      };
+
+      const toggleTheme = () => {
+        theme.value = theme.value === "light" ? "dark" : "light";
+        document.documentElement.classList.toggle(
+          "dark",
+          theme.value === "dark",
+        );
+        localStorage.setItem("theme", theme.value);
+      };
+
+      const themeLabel = computed(() =>
+        theme.value === "light" ? "Dark mode" : "Light mode",
+      );
+
+      onMounted(() => {
+        const saved = localStorage.getItem("theme");
+        if (saved) {
+          theme.value = saved;
+          document.documentElement.classList.toggle(
+            "dark",
+            theme.value === "dark",
+          );
+        }
+      });
+
+      return {
+        selectedFile,
+        selectedIdFile,
+        idProcessing,
+        idNumber,
+        idErrorMessage,
+        trackingNumber,
+        isAssessing,
+        errorMessage,
+        form,
+        isFormValid,
+        payslipName,
+        payslipDepartment,
+        payslipPosition,
+        payslipNationalId,
+        nameMismatchMessage,
+        idNumberMismatchMessage,
+        handleFileUpload,
+        handleIdUpload,
+        runAssessment,
+        toggleTheme,
+        themeLabel,
+      };
+    },
+    delimiters: ["[[", "]]"],
+  }).mount("#app");
+</script>
+{% endblock %}

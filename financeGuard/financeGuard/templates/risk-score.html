@@ -1,0 +1,255 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-1">
+  <section
+    class="rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+    <h2 class="text-base font-semibold">Risk Score</h2>
+    <p class="mt-1 text-sm text-neutral-500">
+      Review your most recent assessment.
+    </p>
+
+    <div v-if="hasAssessment" class="mt-6 space-y-6">
+      <div
+        class="rounded-2xl border border-neutral-200 bg-neutral-50 p-5 dark:border-neutral-800 dark:bg-neutral-950">
+        <div class="text-4xl font-semibold">
+          [[riskScore.toFixed(1)]]
+        </div>
+        <div class="mt-2 text-xs uppercase tracking-[0.2em] text-neutral-500">
+          Risk score (0-100)
+        </div>
+
+        <div class="mt-5">
+          <div class="flex items-center justify-between text-xs font-medium text-neutral-500">
+            <span>Low</span>
+            <span>High</span>
+          </div>
+          <div class="mt-2 h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-800">
+            <div class="h-2 rounded-full" :style="{ width: riskScore + '%', background: riskColor }"></div>
+          </div>
+          <div class="mt-3 text-sm font-semibold" :class="riskClass">
+            [[riskLabel]] risk
+          </div>
+        </div>
+      </div>
+
+      <div v-if="trackingNumber"
+        class="rounded-2xl border border-dashed border-neutral-300 bg-white p-4 text-sm dark:border-neutral-700">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs text-neutral-500">Your tracking number</p>
+            <p class="text-lg font-semibold">[[ trackingNumber ]]</p>
+          </div>
+          <button class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-semibold"
+            @click="copyTrackingNumber">
+            Copy
+          </button>
+        </div>
+        <p class="mt-2 text-xs text-neutral-400">
+          Copy and save this number for future status inquiries.
+        </p>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-4 text-sm dark:border-neutral-800 dark:bg-neutral-950">
+        <div class="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-neutral-500">
+          <span>Decision status</span>
+          <span>[[ decisionStatus.toUpperCase() ]]</span>
+        </div>
+        <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+          [[ decisionReason ]]
+        </p>
+      </div>
+    </div>
+
+    <div v-else class="mt-6 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950">
+      <p>No recent assessment found. Start a new application to generate a risk score.</p>
+      <a href="/apply"
+        class="mt-4 inline-flex rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+        Start application
+      </a>
+    </div>
+  </section>
+</div>
+
+<transition name="toast">
+  <div v-show="showRejectionModal" style="display: none;"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+    <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-neutral-900">
+      <div class="flex items-start gap-3">
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-500/10 dark:text-red-400">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="text-base font-semibold">Application Not Approved</h3>
+          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+            [[ rejectionReason ]]
+          </p>
+          <div v-if="areasFailed.length"
+            class="mt-4 rounded-2xl border border-red-100 bg-red-50/80 p-3 text-sm text-red-700">
+            <div class="font-semibold text-xs uppercase tracking-[0.2em] text-red-600">Areas that need attention</div>
+            <ul class="mt-2 space-y-1">
+              <li v-for="area in areasFailed" :key="area.title" class="text-xs">
+                <span class="font-semibold text-sm text-red-700">[[ area.title ]]</span>
+                <span class="block text-xs text-red-600/80">[[ area.detail ]]</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="areasPassed.length"
+            class="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-3 text-sm text-emerald-700">
+            <div class="font-semibold text-xs uppercase tracking-[0.2em] text-emerald-600">Areas cleared</div>
+            <ul class="mt-2 space-y-1">
+              <li v-for="area in areasPassed" :key="area.title" class="text-xs">
+                <span class="font-semibold text-sm text-emerald-700">[[ area.title ]]</span>
+                <span class="block text-xs text-emerald-600/80">[[ area.detail ]]</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="mt-5 flex justify-end">
+        <button @click="showRejectionModal = false"
+          class="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+</transition>
+
+<transition name="toast">
+  <div v-if="showCopyToast"
+    class="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+      <path fill-rule="evenodd"
+        d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z"
+        clip-rule="evenodd" />
+    </svg>
+    Tracking number copied
+  </div>
+</transition>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const { createApp, ref, computed, onMounted } = Vue;
+
+  createApp({
+    setup() {
+      const riskScore = ref(null);
+      const riskLabel = ref("");
+      const trackingNumber = ref("");
+      const decisionStatus = ref("");
+      const decisionReason = ref("");
+      const showRejectionModal = ref(false);
+      const areasPassed = ref([]);
+      const areasFailed = ref([]);
+      const showCopyToast = ref(false);
+      let toastTimer = ref(null);
+      const theme = ref("light");
+
+      const hasAssessment = computed(() => riskScore.value !== null);
+
+      const loadAssessment = () => {
+        const raw = localStorage.getItem("financeGuard.lastAssessment");
+        if (!raw) return;
+        try {
+          const data = JSON.parse(raw);
+          riskScore.value = data.risk_score ?? null;
+          riskLabel.value = data.risk_label || "";
+          trackingNumber.value = data.tracking_number || "";
+          decisionStatus.value = data.decision_status || "";
+          decisionReason.value = data.decision_reason || "";
+          const feedback = data.area_feedback || { passed: [], failed: [] };
+          areasPassed.value = feedback.passed || [];
+          areasFailed.value = feedback.failed || [];
+          if (decisionStatus.value === "rejected") {
+            showRejectionModal.value = true;
+          }
+        } catch (err) {
+          riskScore.value = null;
+        }
+      };
+
+      const copyTrackingNumber = async () => {
+        if (!trackingNumber.value) return;
+        try {
+          await navigator.clipboard.writeText(trackingNumber.value);
+          if (toastTimer) clearTimeout(toastTimer);
+          showCopyToast.value = true;
+          setTimeout(() => {
+            showCopyToast.value = false;
+          }, 4000);
+        } catch {
+          return;
+        }
+      };
+
+      const riskClass = computed(() => {
+        if (riskLabel.value === "High") return "text-red-500";
+        if (riskLabel.value === "Medium") return "text-amber-500";
+        return "text-emerald-500";
+      });
+
+      const riskColor = computed(() => {
+        if (riskLabel.value === "High") return "#ef4444";
+        if (riskLabel.value === "Medium") return "#f59e0b";
+        return "#10b981";
+      });
+
+      const rejectionReason = computed(() => {
+        return decisionReason.value ||
+          "Rejected: risk assessment did not meet approval requirements.";
+      });
+
+      const toggleTheme = () => {
+        theme.value = theme.value === "light" ? "dark" : "light";
+        document.documentElement.classList.toggle(
+          "dark",
+          theme.value === "dark",
+        );
+        localStorage.setItem("theme", theme.value);
+      };
+
+      const themeLabel = computed(() =>
+        theme.value === "light" ? "Dark mode" : "Light mode",
+      );
+
+      onMounted(() => {
+        const saved = localStorage.getItem("theme");
+        if (saved) {
+          theme.value = saved;
+          document.documentElement.classList.toggle(
+            "dark",
+            theme.value === "dark",
+          );
+        }
+        loadAssessment();
+      });
+
+      return {
+        riskScore,
+        riskLabel,
+        trackingNumber,
+        decisionStatus,
+        decisionReason,
+        hasAssessment,
+        showRejectionModal,
+        areasPassed,
+        areasFailed,
+        showCopyToast,
+        copyTrackingNumber,
+        riskClass,
+        riskColor,
+        rejectionReason,
+        toggleTheme,
+        themeLabel,
+      };
+    },
+    delimiters: ["[[", "]]"],
+  }).mount("#app");
+</script>
+{% endblock %}

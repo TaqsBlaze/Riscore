@@ -974,6 +974,18 @@ async def index():
     accuracy = round(META["accuracy"] * 100, 1) if META else None
     return render_template("index.html", model_accuracy=accuracy)
 
+@app.route("/apply")
+async def application_page():
+    return render_template("application.html")
+
+@app.route("/risk-score")
+async def risk_score_page():
+    return render_template("risk-score.html")
+
+@app.route("/track")
+async def tracking_page():
+    return render_template("tracking.html")
+
 @app.route("/dashboard")
 async def dashboard():
     return render_template("dashboard/dashboard.html")
@@ -1068,6 +1080,43 @@ async def parse_payslip():
         value = re.sub(r"\s+", " ", match.group(1)).strip()
         return value or None
 
+    def _extract_net_pay(text: str) -> float | None:
+        patterns = [
+            r"(?:net\s*pay|net\s*salary|net\s*amount|net\s*earnings|take[-\s]*home\s*pay)[^\d]*(\d[\d,\.]+)",
+            r"(?:net)[^\d]*(\d[\d,\.]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            candidate = re.sub(r"[^\d.]", "", match.group(1))
+            if not candidate:
+                continue
+            try:
+                value = float(candidate)
+            except ValueError:
+                continue
+            if 10 <= value < 1000000:
+                return value
+        return None
+
+    def _extract_national_id(text: str) -> str | None:
+        if not text:
+            return None
+        candidates = [
+            r"(?:national\s*id|id\s*(?:number|no)|identity\s*number)\s*[:\-]?\s*([\d\s-]{6,20})",
+            r"\b(\d{2}[-\s]?\d{7,8})\b",
+            r"\b(\d{9,12})\b",
+        ]
+        for pattern in candidates:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            candidate = re.sub(r"[^0-9]", "", match.group(1))
+            if 6 <= len(candidate) <= 13:
+                return candidate
+        return None
+
     data     = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"success": False, "error": "Invalid JSON body."}), 400
@@ -1079,25 +1128,19 @@ async def parse_payslip():
         return jsonify({"success": False, "error": "Could not extract employee name from payslip."}), 422
     department = _extract_labeled_text(text, ["department", "dept", "division", "unit"])
     position = _extract_labeled_text(text, ["position", "job\s*title", "role", "designation"])
-    patterns = [
-        r"(?:basic\s*salary|basic\s*pay)[^\d]*(\d[\d,\.]+)",
-    ]
-    for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            try:
-                val = float(m.group(1).replace(",", ""))
-                if 50 < val < 100000:
-                    return jsonify({
-                        "success": True,
-                        "salary": val,
-                        "employee_name": employee_name,
-                        "department": department,
-                        "position": position,
-                    })
-            except ValueError:
-                pass
-    return jsonify({"success": False, "error": "Could not extract basic salary."}), 422
+    net_pay = _extract_net_pay(text)
+    if net_pay is None:
+        return jsonify({"success": False, "error": "Could not extract net pay."}), 422
+    national_id = _extract_national_id(text)
+    return jsonify({
+        "success": True,
+        "salary": net_pay,
+        "net_pay": net_pay,
+        "national_id": national_id,
+        "employee_name": employee_name,
+        "department": department,
+        "position": position,
+    })
 
 
 @app.route("/api/alerts")

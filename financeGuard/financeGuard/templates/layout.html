@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" class="h-full" x-data>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinanceGuard | Risk Check</title>
+  <script src="{{ url_for('static', filename='js/tailwind.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/vue3.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/axios.min.js') }}"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            fg: "#0A0A0A",
+            bg: "#FAFAFA",
+            muted: "#6B7280",
+            border: "#E5E7EB",
+            accent: "#111827",
+          },
+        },
+      },
+    };
+  </script>
+</head>
+
+<body class="h-full bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+  <div id="app" class="min-h-full">
+    <header class="border-b border-neutral-200/70 dark:border-neutral-800">
+      <div class="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
+        <div>
+          <div class="text-sm uppercase tracking-[0.25em] text-neutral-500">
+            FinanceGuard
+          </div>
+          <h1 class="text-xl font-semibold">Loan Application Platform</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <nav class="hidden items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500 md:flex">
+            <a class="hover:text-neutral-900 dark:hover:text-neutral-100" href="/apply">Apply</a>
+            <a class="hover:text-neutral-900 dark:hover:text-neutral-100" href="/risk-score">Risk Score</a>
+            <a class="hover:text-neutral-900 dark:hover:text-neutral-100" href="/track">Tracking</a>
+          </nav>
+          <button @click="toggleTheme"
+            class="rounded-full border border-neutral-200 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:border-neutral-700">
+            [[ themeLabel ]]
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="mx-auto w-full max-w-6xl px-6 py-10">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% block scripts %}{% endblock %}
+
+  <style>
+    .toast-enter-active {
+      animation: slide-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .toast-leave-active {
+      animation: slide-out 0.25s ease-in forwards;
+    }
+
+    @keyframes slide-in {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes slide-out {
+      from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+      }
+    }
+  </style>
+</body>
+
+</html>
