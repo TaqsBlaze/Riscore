@@ -1508,14 +1508,63 @@ async def assess():
     if payslip_name and not _names_match(payslip_name, full_name):
         return jsonify({"error": "User name and name from payslip do not match."}), 400
 
+    now = datetime.datetime.now(datetime.timezone.utc)
+    frequent_window_start = now - datetime.timedelta(days=FREQUENT_APPLICATION_WINDOW_DAYS)
+
     existing_borrower_id = None
+    aggregated_total_loans = 0
+    aggregated_recent_applications = 0
+    pending_unpaid_loans = 0
+    aggregated_outstanding_balance = 0.0
+    borrower_snapshot = None
     async with AsyncSessionFactory() as check_session:
-        result_existing = await check_session.execute(
-            select(Borrower.id).where(
+        existing_result = await check_session.execute(
+            select(Borrower).where(
                 func.lower(Borrower.full_name) == full_name.lower()
             )
         )
-        existing_borrower_id = result_existing.scalar_one_or_none()
+        existing_record = existing_result.scalar_one_or_none()
+        if existing_record:
+            existing_borrower_id = existing_record.id
+            borrower_snapshot = {
+                "employment_sector": existing_record.employment_sector,
+                "job_title": existing_record.job_title,
+                "return_rate": existing_record.return_rate,
+                "days_past_due": existing_record.days_past_due,
+                "mfi_diversity_score": existing_record.mfi_diversity_score,
+                "outstanding_balance": existing_record.outstanding_balance,
+            }
+            total_result = await check_session.execute(
+                select(func.count(Transaction.id)).where(
+                    Transaction.borrower_id == existing_record.id,
+                    Transaction.type == "assessment",
+                )
+            )
+            aggregated_total_loans = int(total_result.scalar() or 0)
+            recent_result = await check_session.execute(
+                select(func.count(Transaction.id)).where(
+                    Transaction.borrower_id == existing_record.id,
+                    Transaction.type == "assessment",
+                    Transaction.timestamp >= frequent_window_start,
+                )
+            )
+            aggregated_recent_applications = int(recent_result.scalar() or 0)
+            approved_result = await check_session.execute(
+                select(func.count(Transaction.id)).where(
+                    Transaction.borrower_id == existing_record.id,
+                    Transaction.type == "assessment",
+                    Transaction.status == "approved",
+                )
+            )
+            pending_unpaid_loans = int(approved_result.scalar() or 0)
+            outstanding_result = await check_session.execute(
+                select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
+                    Transaction.borrower_id == existing_record.id,
+                    Transaction.type == "assessment",
+                    Transaction.status == "approved",
+                )
+            )
+            aggregated_outstanding_balance = float(outstanding_result.scalar() or 0.0)
 
     # -- In-memory MFI lookup (instant, no I/O) ---------------
     mfi_row, match_type = lookup_mfi(first_name, last_name)
@@ -1543,10 +1592,26 @@ async def assess():
         match_type = "user_input"
 
     borrower_exists = existing_borrower_id is not None
-    if not borrower_exists:
-        tr, al = 0.0, 0.0
-    db_total_loans = tr if borrower_exists else 0.0
-    db_active_loans = al if borrower_exists else 0.0
+    if borrower_exists:
+        tr = float(aggregated_total_loans)
+        al = float(pending_unpaid_loans)
+        ob = float(
+            aggregated_outstanding_balance
+            or (borrower_snapshot.get("outstanding_balance") if borrower_snapshot else 0.0)
+            or ob
+        )
+        if borrower_snapshot:
+            sec = borrower_snapshot.get("employment_sector") or sec
+            job = borrower_snapshot.get("job_title") or job
+            rr = float(borrower_snapshot.get("return_rate") or rr)
+            dp = float(borrower_snapshot.get("days_past_due") or dp)
+            ms = float(borrower_snapshot.get("mfi_diversity_score") or ms)
+        data_source = "db_record"
+        match_type = "db_record"
+    db_total_loans = float(tr) if borrower_exists else 0.0
+    db_active_loans = float(al) if borrower_exists else 0.0
+    db_outstanding_balance = float(ob) if borrower_exists else 0.0
+    unsettled_loan_count = int(pending_unpaid_loans) if borrower_exists else 0
 
     # -- ML scoring (CPU-bound -> thread pool, non-blocking) ---
     score, label, probs = await score_borrower_async(
@@ -1554,34 +1619,13 @@ async def assess():
         loan_amount
     )
 
-    now       = datetime.datetime.now(datetime.timezone.utc)
-    frequent_window_start = now - datetime.timedelta(days=FREQUENT_APPLICATION_WINDOW_DAYS)
-
     # -- Persist to MySQL (async DB I/O) ----------------------
     area_feedback: dict[str, list[dict[str, str]]] = {"failed": [], "passed": []}
+    recent_assessment_count = aggregated_recent_applications
     try:
         async with AsyncSessionFactory() as session:
-            recent_assessment_count = 0
-            unsettled_loan_count = 0
-
             if existing_borrower_id:
                 bid = existing_borrower_id
-                result_recent = await session.execute(
-                    select(func.count(Transaction.id)).where(
-                        Transaction.borrower_id == bid,
-                        Transaction.type == "assessment",
-                        Transaction.timestamp >= frequent_window_start,
-                    )
-                )
-                recent_assessment_count = int(result_recent.scalar() or 0)
-                result_approved = await session.execute(
-                    select(func.count(Transaction.id)).where(
-                        Transaction.borrower_id == bid,
-                        Transaction.type == "assessment",
-                        Transaction.status == "approved",
-                    )
-                )
-                unsettled_loan_count = int(result_approved.scalar() or 0)
                 await session.execute(
                     update(Borrower)
                     .where(Borrower.id == bid)
@@ -1595,6 +1639,9 @@ async def assess():
                         risk_probability_low    = probs.get("Low",    0),
                         data_source             = data_source,
                         common_loan_reason      = loan_reason,
+                        total_prev_loans        = db_total_loans,
+                        active_loans            = db_active_loans,
+                        outstanding_balance     = db_outstanding_balance,
                     )
                 )
             else:
@@ -1602,7 +1649,7 @@ async def assess():
                 session.add(Borrower(
                     id=bid, full_name=full_name, first_name=first_name, last_name=last_name,
                     salary=salary, employment_sector=sec, job_title=job,
-                    total_prev_loans=db_total_loans, active_loans=db_active_loans, outstanding_balance=ob,
+                    total_prev_loans=db_total_loans, active_loans=db_active_loans, outstanding_balance=db_outstanding_balance,
                     avg_loan_amount=am, common_loan_reason=loan_reason, return_rate=rr,
                     days_past_due=dp, mfi_diversity_score=ms,
                     risk_score=score, risk_label=label,
