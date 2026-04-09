@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from financeGuard import app, db
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -17,6 +18,22 @@ log = logging.getLogger("FinanceGuard")
 
 _engine = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def _ensure_transactions_deposit_columns(sync_conn) -> None:
+    inspector = inspect(sync_conn)
+    if "transactions" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("transactions")}
+    missing_columns = {
+        "deposit_channel": "ALTER TABLE transactions ADD COLUMN deposit_channel VARCHAR(32)",
+        "deposit_details": "ALTER TABLE transactions ADD COLUMN deposit_details TEXT",
+        "deposit_updated_at": "ALTER TABLE transactions ADD COLUMN deposit_updated_at DATETIME",
+    }
+    for column_name, statement in missing_columns.items():
+        if column_name not in existing_columns:
+            sync_conn.execute(text(statement))
 
 try:
     _engine = create_async_engine(
@@ -51,4 +68,5 @@ async def init_db() -> None:
         raise RuntimeError("Async database unavailable. Install `aiomysql`.")
     async with _engine.begin() as conn:
         await conn.run_sync(db.Model.metadata.create_all)
+        await conn.run_sync(_ensure_transactions_deposit_columns)
     log.info("Database tables ready")

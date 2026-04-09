@@ -66,6 +66,9 @@ class Transaction(db.Model):
     risk_label_after = Column(String(20),  default="Low")
     status           = Column(String(32),  default="processing")
     tracking_number  = Column(String(36), unique=True, index=True)
+    deposit_channel  = Column(String(32))
+    deposit_details  = Column(Text)
+    deposit_updated_at = Column(DateTime)
     timestamp        = Column(DateTime, default=now_local)
 
     def to_dict(self):

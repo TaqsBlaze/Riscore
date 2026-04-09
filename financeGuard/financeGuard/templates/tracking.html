@@ -49,6 +49,66 @@
             statusLookup.result.timestamp ]]
           </p>
         </div>
+
+        <div v-if="statusLookup.result.status === 'approved'"
+          class="mt-5 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+          <p class="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Deposit details
+          </p>
+          <p class="mt-1 text-sm text-neutral-500">
+            Choose where approved funds should be sent.
+          </p>
+
+          <div class="mt-4 space-y-3">
+            <div v-if="savedPayoutDetails"
+              class="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <p class="font-semibold">Saved destination: [[ savedPayoutDetails.channel_label ]]</p>
+              <p v-for="item in savedPayoutSummary" :key="item.label" class="mt-1">
+                <span class="font-medium">[[ item.label ]]:</span> [[ item.value ]]
+              </p>
+            </div>
+
+            <select v-model="payoutForm.channel"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950">
+              <option value="">Select payout channel</option>
+              <option value="ecocash">EcoCash</option>
+              <option value="innbucks">InnBucks</option>
+              <option value="visa_card">Visa Card</option>
+              <option value="mastercard">MasterCard</option>
+            </select>
+
+            <input v-if="isWalletChannel" v-model="payoutForm.account_name" type="text" placeholder="Account name"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            <input v-if="isWalletChannel" v-model="payoutForm.phone_number" type="text" placeholder="Phone number"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+
+            <input v-if="isCardChannel" v-model="payoutForm.account_name" type="text" placeholder="Account name"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            <input v-if="isCardChannel" v-model="payoutForm.bank_name" type="text" placeholder="Issuing bank"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            <input v-if="isCardChannel" v-model="payoutForm.card_number" type="text" placeholder="Card number"
+              class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            <div v-if="isCardChannel" class="grid gap-3 sm:grid-cols-2">
+              <input v-model="payoutForm.expiry_month" type="text" placeholder="Expiry month (MM)"
+                class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+              <input v-model="payoutForm.expiry_year" type="text" placeholder="Expiry year (YYYY)"
+                class="w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm shadow-sm outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950" />
+            </div>
+
+            <button
+              class="w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              :disabled="!isPayoutFormValid || isSavingPayout" @click="savePayoutDetails">
+              [[ isSavingPayout ? 'Saving...' : 'Save deposit details' ]]
+            </button>
+
+            <p v-if="payoutMessage" class="text-xs text-emerald-600">
+              [[ payoutMessage ]]
+            </p>
+            <p v-if="payoutError" class="text-xs text-red-500">
+              [[ payoutError ]]
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -95,13 +155,88 @@
         result: null,
         error: "",
       });
+      const payoutForm = reactive({
+        channel: "",
+        account_name: "",
+        phone_number: "",
+        bank_name: "",
+        card_number: "",
+        expiry_month: "",
+        expiry_year: "",
+      });
       const decisionReason = ref("");
       const showRejectionModal = ref(false);
+      const payoutMessage = ref("");
+      const payoutError = ref("");
+      const isSavingPayout = ref(false);
+      const savedPayoutDetails = ref(null);
       const theme = ref("light");
+
+      const resetPayoutForm = () => {
+        payoutForm.channel = "";
+        payoutForm.account_name = "";
+        payoutForm.phone_number = "";
+        payoutForm.bank_name = "";
+        payoutForm.card_number = "";
+        payoutForm.expiry_month = "";
+        payoutForm.expiry_year = "";
+      };
+
+      const applyPayoutDetails = (details) => {
+        savedPayoutDetails.value = details || null;
+        resetPayoutForm();
+        if (!details) return;
+        payoutForm.channel = details.channel || "";
+      };
+
+      const isWalletChannel = computed(() =>
+        ["ecocash", "innbucks"].includes(payoutForm.channel),
+      );
+
+      const isCardChannel = computed(() =>
+        ["visa_card", "mastercard"].includes(payoutForm.channel),
+      );
+
+      const isPayoutFormValid = computed(() => {
+        if (isWalletChannel.value) {
+          return Boolean(
+            payoutForm.account_name.trim() &&
+            payoutForm.phone_number.trim(),
+          );
+        }
+        if (isCardChannel.value) {
+          return Boolean(
+            payoutForm.account_name.trim() &&
+            payoutForm.bank_name.trim() &&
+            payoutForm.card_number.trim() &&
+            payoutForm.expiry_month.trim() &&
+            payoutForm.expiry_year.trim(),
+          );
+        }
+        return false;
+      });
+
+      const savedPayoutSummary = computed(() => {
+        if (!savedPayoutDetails.value) return [];
+        const details = savedPayoutDetails.value;
+        const items = [];
+        if (details.account_name) items.push({ label: "Account name", value: details.account_name });
+        if (details.phone_number) items.push({ label: "Phone number", value: details.phone_number });
+        if (details.bank_name) items.push({ label: "Bank", value: details.bank_name });
+        if (details.card_number) items.push({ label: "Card number", value: details.card_number });
+        if (details.expiry_month && details.expiry_year) {
+          items.push({ label: "Expiry", value: `${details.expiry_month}/${details.expiry_year}` });
+        }
+        return items;
+      });
 
       const lookupStatus = async () => {
         statusLookup.error = "";
         statusLookup.result = null;
+        payoutMessage.value = "";
+        payoutError.value = "";
+        savedPayoutDetails.value = null;
+        resetPayoutForm();
         if (!statusLookup.tracking) {
           statusLookup.error = "Tracking number is required.";
           return;
@@ -111,11 +246,14 @@
             `http://localhost:5000/api/application-status/${statusLookup.tracking.trim()}`,
           );
           statusLookup.result = data;
+          applyPayoutDetails(data?.payout_details || null);
           if (data?.status === "rejected") {
             decisionReason.value = data?.decision_reason || "";
             showRejectionModal.value = true;
           }
         } catch (err) {
+          savedPayoutDetails.value = null;
+          resetPayoutForm();
           statusLookup.error =
             err?.response?.data?.error || "Unable to fetch status.";
         }
@@ -125,6 +263,57 @@
         return decisionReason.value ||
           "Rejected: risk assessment did not meet approval requirements.";
       });
+
+      const savePayoutDetails = async () => {
+        payoutMessage.value = "";
+        payoutError.value = "";
+        if (!statusLookup.result?.tracking_number) {
+          payoutError.value = "Look up an approved application first.";
+          return;
+        }
+        if (!isPayoutFormValid.value) {
+          payoutError.value = "Complete the payout details for the selected channel.";
+          return;
+        }
+
+        const details = isWalletChannel.value
+          ? {
+            account_name: payoutForm.account_name.trim(),
+            phone_number: payoutForm.phone_number.trim(),
+          }
+          : {
+            account_name: payoutForm.account_name.trim(),
+            bank_name: payoutForm.bank_name.trim(),
+            card_number: payoutForm.card_number.trim(),
+            expiry_month: payoutForm.expiry_month.trim(),
+            expiry_year: payoutForm.expiry_year.trim(),
+          };
+
+        isSavingPayout.value = true;
+        try {
+          const { data } = await axios.post(
+            `http://localhost:5000/api/application-status/${statusLookup.result.tracking_number}/payout-details`,
+            {
+              channel: payoutForm.channel,
+              details,
+            },
+            {
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+          payoutMessage.value = `${data?.payout_details?.channel_label || "Payout"} details saved.`;
+          statusLookup.result = {
+            ...statusLookup.result,
+            payout_details: data?.payout_details || null,
+          };
+          applyPayoutDetails(data?.payout_details || null);
+        } catch (err) {
+          payoutError.value =
+            err?.response?.data?.error || "Unable to save payout details.";
+        } finally {
+          isSavingPayout.value = false;
+        }
+      };
 
       const toggleTheme = () => {
         theme.value = theme.value === "light" ? "dark" : "light";
@@ -152,9 +341,19 @@
 
       return {
         statusLookup,
+        payoutForm,
         lookupStatus,
+        savePayoutDetails,
         showRejectionModal,
         rejectionReason,
+        payoutMessage,
+        payoutError,
+        isSavingPayout,
+        savedPayoutDetails,
+        savedPayoutSummary,
+        isWalletChannel,
+        isCardChannel,
+        isPayoutFormValid,
         toggleTheme,
         themeLabel,
       };

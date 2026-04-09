@@ -8,10 +8,10 @@ from sqlalchemy import (
     Column, String, Float, Integer, Boolean,
     DateTime, Text, func, select, update, desc, asc, or_
 )
-import os, asyncio, random, datetime, pickle, re, uuid, logging
+import os, asyncio, random, datetime, pickle, re, uuid, logging, json
 from concurrent.futures import ThreadPoolExecutor
 from financeGuard.api import AsyncSessionFactory, init_db, log
-from financeGuard.models.models import BlacklistedUser, Borrower, User, Alert, Transaction
+from financeGuard.models.models import BlacklistedUser, Borrower, User, Alert, Transaction, now_local
 from werkzeug.security import check_password_hash, generate_password_hash
 try:
     from flask_mail import Message
@@ -140,10 +140,99 @@ FREQUENT_APPLICATION_WINDOW_DAYS = 30
 FREQUENT_APPLICATION_THRESHOLD = 3
 
 VALID_APPLICATION_STATUSES = {"processing", "approved", "suspended", "rejected"}
+DEPOSIT_CHANNELS = {
+    "ecocash": {
+        "label": "EcoCash",
+        "fields": ("account_name", "phone_number"),
+    },
+    "innbucks": {
+        "label": "InnBucks",
+        "fields": ("account_name", "phone_number"),
+    },
+    "visa_card": {
+        "label": "Visa Card",
+        "fields": ("account_name", "bank_name", "card_number", "expiry_month", "expiry_year"),
+    },
+    "mastercard": {
+        "label": "MasterCard",
+        "fields": ("account_name", "bank_name", "card_number", "expiry_month", "expiry_year"),
+    },
+}
 
 
 def _generate_tracking_number():
     return f"T{uuid.uuid4().hex[:8].upper()}"
+
+
+def _mask_number(value: str, *, visible_digits: int = 4) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if not digits:
+        return ""
+    hidden = max(0, len(digits) - visible_digits)
+    return ("*" * hidden) + digits[-visible_digits:]
+
+
+def _serialize_deposit(tx: Transaction) -> dict | None:
+    if not tx.deposit_channel:
+        return None
+    try:
+        raw_details = json.loads(tx.deposit_details or "{}")
+    except json.JSONDecodeError:
+        raw_details = {}
+
+    details = dict(raw_details)
+    if tx.deposit_channel in {"ecocash", "innbucks"} and details.get("phone_number"):
+        details["phone_number"] = _mask_number(details["phone_number"])
+    if tx.deposit_channel in {"visa_card", "mastercard"} and details.get("card_number"):
+        details["card_number"] = _mask_number(details["card_number"])
+
+    channel_meta = DEPOSIT_CHANNELS.get(tx.deposit_channel, {})
+    return {
+        "channel": tx.deposit_channel,
+        "label": channel_meta.get("label", tx.deposit_channel),
+        "details": details,
+        "updated_at": tx.deposit_updated_at.isoformat() if tx.deposit_updated_at else None,
+    }
+
+
+def _validate_deposit_payload(payload: dict) -> tuple[str, dict]:
+    channel = (payload.get("channel") or "").strip().lower()
+    if channel not in DEPOSIT_CHANNELS:
+        raise ValueError("Please choose a valid deposit channel.")
+
+    details = payload.get("details") or {}
+    if not isinstance(details, dict):
+        raise ValueError("Deposit details are required.")
+
+    clean_details: dict[str, str] = {}
+    for field_name in DEPOSIT_CHANNELS[channel]["fields"]:
+        value = str(details.get(field_name) or "").strip()
+        if not value:
+            raise ValueError(f"{field_name.replace('_', ' ').title()} is required.")
+        clean_details[field_name] = value
+
+    if channel in {"ecocash", "innbucks"}:
+        phone_digits = re.sub(r"\D", "", clean_details["phone_number"])
+        if len(phone_digits) < 9 or len(phone_digits) > 15:
+            raise ValueError("Phone number must contain 9 to 15 digits.")
+        clean_details["phone_number"] = phone_digits
+    else:
+        card_digits = re.sub(r"\D", "", clean_details["card_number"])
+        if len(card_digits) < 12 or len(card_digits) > 19:
+            raise ValueError("Card number must contain 12 to 19 digits.")
+        clean_details["card_number"] = card_digits
+
+        month = int(clean_details["expiry_month"])
+        year = int(clean_details["expiry_year"])
+        current_year = now_local().year
+        if month < 1 or month > 12:
+            raise ValueError("Expiry month must be between 1 and 12.")
+        if year < current_year or year > current_year + 15:
+            raise ValueError("Expiry year is not valid.")
+        clean_details["expiry_month"] = f"{month:02d}"
+        clean_details["expiry_year"] = str(year)
+
+    return channel, clean_details
 
 def _parse_float(value, field_name, *, min_value=None):
     try:
@@ -213,6 +302,9 @@ def _build_features(salary, sector, reason, total_loans, active_loans,
 
 
 AUTO_DECISION_REJECTION_THRESHOLD = 35.0  # anomaly score that triggers rejection for non-high labels
+ANOMALY_REJECTION_FRONTEND_SCORE_MIN = 90.0
+ANOMALY_REJECTION_FRONTEND_SCORE_MAX = 98.0
+PAYOUT_DETAILS_MARKER = "\n\n[PAYOUT_DETAILS]"
 
 
 def _score_sync(salary, sector, reason, total_loans, active_loans,
@@ -265,12 +357,19 @@ def evaluate_application_anomalies(
     unsettled_loan_count: int = 0,
 ):
     anomalies = []
+    notifications = []
 
     def add(code: str, description: str, score: float):
         anomalies.append({
             "code": code,
             "description": description,
             "score": float(score),
+        })
+
+    def notify(code: str, description: str):
+        notifications.append({
+            "code": code,
+            "description": description,
         })
 
     debt_to_income = float(outstanding) / max(float(salary), 1.0)
@@ -298,10 +397,9 @@ def evaluate_application_anomalies(
         )
 
     if (not is_existing_borrower) and float(total_loans) <= 0 and float(active_loans) <= 0:
-        add(
+        notify(
             "NEW_USER_NO_HISTORY",
             "New user has no previous borrowing records.",
-            12.0,
         )
 
     # Additional anomalies.
@@ -339,6 +437,8 @@ def evaluate_application_anomalies(
         "is_anomaly": len(anomalies) > 0,
         "anomaly_score": anomaly_score,
         "anomalies": anomalies,
+        "has_notification": len(notifications) > 0,
+        "notifications": notifications,
     }
 
 
@@ -378,12 +478,28 @@ def _format_rejection_reason(*, score: float, label: str, anomaly_codes: list[st
             "Rejected: requested amount is too high relative to your salary. "
             "Your application cannot be approved."
         )
-    if "NEW_USER_NO_HISTORY" in anomaly_codes:
-        return (
-            "Rejected: no borrowing history is available to assess this request. "
-            "Your application cannot be approved."
-        )
     return "Rejected: risk assessment did not meet approval requirements."
+
+
+def _is_anomaly_rejection(*, decision_status: str, anomaly_codes: str) -> bool:
+    codes = [c.strip() for c in (anomaly_codes or "").split(",") if c.strip() and c.strip() != "none"]
+    return decision_status == "rejected" and len(codes) > 0
+
+
+def _boost_rejected_anomaly_risk_score(
+    *,
+    score: float,
+    anomaly_score: float,
+    decision_status: str,
+    anomaly_codes: str,
+) -> float:
+    if not _is_anomaly_rejection(decision_status=decision_status, anomaly_codes=anomaly_codes):
+        return round(float(score), 1)
+
+    span = ANOMALY_REJECTION_FRONTEND_SCORE_MAX - ANOMALY_REJECTION_FRONTEND_SCORE_MIN
+    threshold = max(float(AUTO_DECISION_REJECTION_THRESHOLD), 1.0)
+    scaled = min(span, round((max(float(anomaly_score), 0.0) / threshold) * span, 1))
+    return round(min(ANOMALY_REJECTION_FRONTEND_SCORE_MAX, ANOMALY_REJECTION_FRONTEND_SCORE_MIN + scaled), 1)
 
 
 def _format_currency(value: float) -> str:
@@ -425,7 +541,7 @@ def _pass_detail_history(context: dict[str, float]) -> str:
     active = int(context.get("active_loans", 0))
     if context.get("is_existing_borrower"):
         return f"Existing borrower history ({total} previous loans, {active} active)"
-    return f"Borrowing history data present ({total} previous loans, {active} active)"
+    return "New borrower profile detected; no prior borrowing history on record"
 
 
 def _pass_detail_debt_to_income(context: dict[str, float]) -> str:
@@ -553,6 +669,59 @@ def _append_area_summary(message: str, area_feedback: dict[str, list[dict[str, s
     if not summary:
         return message
     return f"{message.rstrip()} {summary}"
+
+
+def _split_transaction_description(description: str | None) -> tuple[str, dict | None]:
+    raw = (description or "").strip()
+    if PAYOUT_DETAILS_MARKER not in raw:
+        return raw, None
+    base, payload = raw.split(PAYOUT_DETAILS_MARKER, 1)
+    try:
+        details = json.loads(payload.strip())
+        if isinstance(details, dict):
+            return base.strip(), details
+    except json.JSONDecodeError:
+        pass
+    return base.strip(), None
+
+
+def _merge_transaction_description(description: str | None, payout_details: dict | None) -> str:
+    base, _ = _split_transaction_description(description)
+    if not payout_details:
+        return base
+    return f"{base}{PAYOUT_DETAILS_MARKER}\n{json.dumps(payout_details, sort_keys=True)}"
+
+
+def _get_stored_payout_details(tx: Transaction) -> dict | None:
+    if tx.deposit_channel:
+        serialized = _serialize_deposit(tx)
+        if serialized:
+            details = serialized.get("details") or {}
+            return {
+                "channel": serialized["channel"],
+                "channel_label": serialized["label"],
+                **details,
+                "updated_at": serialized.get("updated_at"),
+            }
+
+    # Backward compatibility for rows that still store payout details in description.
+    _, legacy_payout_details = _split_transaction_description(tx.description)
+    return legacy_payout_details
+
+
+def _validate_payout_details(channel: str, details: dict) -> dict:
+    normalized_channel = (channel or "").strip().lower()
+    if normalized_channel == "master_card":
+        normalized_channel = "mastercard"
+    payload_channel, payload_details = _validate_deposit_payload({
+        "channel": normalized_channel,
+        "details": details,
+    })
+    return {
+        "channel": payload_channel,
+        "channel_label": DEPOSIT_CHANNELS[payload_channel]["label"],
+        **payload_details,
+    }
 
 
 def decide_application(*, score: float, label: str, anomaly_score: float, anomaly_codes: str) -> tuple[str, str]:
@@ -1127,7 +1296,7 @@ async def parse_payslip():
     if not employee_name:
         return jsonify({"success": False, "error": "Could not extract employee name from payslip."}), 422
     department = _extract_labeled_text(text, ["department", "dept", "division", "unit"])
-    position = _extract_labeled_text(text, ["position", "job\s*title", "role", "designation"])
+    position = _extract_labeled_text(text, ["position", r"job\s*title", "role", "designation"])
     net_pay = _extract_net_pay(text)
     if net_pay is None:
         return jsonify({"success": False, "error": "Could not extract net pay."}), 422
@@ -1227,10 +1396,11 @@ async def get_applications():
             has_more = len(rows) > size
             payload = []
             for tx, borrower in rows[:size]:
+                decision_reason, _ = _split_transaction_description(tx.description)
                 payload.append({
                     "tracking_number": tx.tracking_number,
                     "status": tx.status or "processing",
-                    "decision_reason": tx.description,
+                    "decision_reason": decision_reason,
                     "amount": float(tx.amount or 0.0),
                     "risk_score": tx.risk_score_after,
                     "risk_label": tx.risk_label_after,
@@ -1269,18 +1439,59 @@ async def application_status(tracking_number):
             if not row:
                 return jsonify({"error": "Tracking number not found"}), 404
             tx, borrower = row
+            decision_reason, _ = _split_transaction_description(tx.description)
             return jsonify({
                 "tracking_number": tx.tracking_number,
                 "status": tx.status or "processing",
-                "decision_reason": tx.description,
+                "decision_reason": decision_reason,
                 "risk_score": tx.risk_score_after,
                 "risk_label": tx.risk_label_after,
                 "borrower": borrower.full_name if borrower else tx.borrower_id,
                 "timestamp": tx.timestamp.isoformat(),
+                "payout_details": _get_stored_payout_details(tx),
             })
     except Exception:
         log.exception("application_status() error")
         return jsonify({"error": "Unable to fetch status"}), 500
+
+
+@app.route("/api/application-status/<tracking_number>/payout-details", methods=["POST"])
+async def save_payout_details(tracking_number):
+    data = request.get_json(silent=True) or {}
+    try:
+        payout_details = _validate_payout_details(
+            data.get("channel", ""),
+            data.get("details") or {},
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        async with AsyncSessionFactory() as session:
+            result = await session.execute(
+                select(Transaction)
+                .where(Transaction.tracking_number == tracking_number)
+            )
+            tx = result.scalar_one_or_none()
+            if not tx:
+                return jsonify({"error": "Tracking number not found"}), 404
+            if (tx.status or "").lower() != "approved":
+                return jsonify({"error": "Payout details can only be saved for approved applications."}), 400
+
+            decision_reason, _ = _split_transaction_description(tx.description)
+            tx.description = decision_reason
+            tx.deposit_channel = payout_details["channel"]
+            tx.deposit_details = json.dumps(payout_details)
+            tx.deposit_updated_at = now_local()
+            await session.commit()
+            return jsonify({
+                "success": True,
+                "tracking_number": tx.tracking_number,
+                "payout_details": _get_stored_payout_details(tx),
+            })
+    except Exception:
+        log.exception("save_payout_details() error")
+        return jsonify({"error": "Unable to save payout details"}), 500
 
 
 @app.route("/api/blacklist", methods=["GET"])
@@ -1621,6 +1832,8 @@ async def assess():
 
     # -- Persist to MySQL (async DB I/O) ----------------------
     area_feedback: dict[str, list[dict[str, str]]] = {"failed": [], "passed": []}
+    frontend_risk_score = score
+    frontend_risk_label = label
     recent_assessment_count = aggregated_recent_applications
     try:
         async with AsyncSessionFactory() as session:
@@ -1704,12 +1917,30 @@ async def assess():
                 anomaly_score=anomaly_eval["anomaly_score"],
                 anomaly_codes=anomaly_codes,
             )
+            frontend_risk_score = _boost_rejected_anomaly_risk_score(
+                score=score,
+                anomaly_score=anomaly_eval["anomaly_score"],
+                decision_status=decision_status,
+                anomaly_codes=anomaly_codes,
+            )
+            frontend_risk_label = "High" if frontend_risk_score != round(float(score), 1) else label
+
+            if frontend_risk_score != score:
+                await session.execute(
+                    update(Borrower)
+                    .where(Borrower.id == bid)
+                    .values(
+                        risk_score=frontend_risk_score,
+                        risk_label=frontend_risk_label,
+                    )
+                )
+
             tracking_number = _generate_tracking_number() if decision_status == "approved" else None
             session.add(Transaction(
                 borrower_id=bid, type="assessment", amount=loan_amount,
                 description=decision_reason,
                 is_anomaly=anomaly_eval["is_anomaly"], anomaly_score=anomaly_eval["anomaly_score"],
-                risk_score_after=score, risk_label_after=label,
+                risk_score_after=frontend_risk_score, risk_label_after=frontend_risk_label,
                 status=decision_status,
                 tracking_number=tracking_number,
                 timestamp=now,
@@ -1742,6 +1973,21 @@ async def assess():
                                    anomaly_msg, severity, "Email,Dashboard",
                                    area_feedback=area_feedback)
 
+            if anomaly_eval.get("notifications"):
+                new_user_message = (
+                    f"{full_name} is a new borrower profile. "
+                    "No prior loan history was found, so the application was logged as a notification only."
+                )
+                await create_alert(
+                    session,
+                    bid,
+                    full_name,
+                    "NEW_USER_NOTIFICATION",
+                    new_user_message,
+                    "INFO",
+                    "Dashboard",
+                )
+
             await session.commit()
 
     except Exception as exc:
@@ -1769,12 +2015,13 @@ async def assess():
             "failed": area_feedback.get("failed", []),
             "passed": area_feedback.get("passed", []),
         },
-        "risk_score":    score,
-        "risk_label":    label,
+        "risk_score":    frontend_risk_score,
+        "risk_label":    frontend_risk_label,
         "probabilities": {k: round(v * 100, 1) for k, v in probs.items()},
         "data_source":   data_source,
         "match_type":    match_type,
         "anomaly_detection": anomaly_eval,
+        "notifications": anomaly_eval.get("notifications", []),
         "area_feedback": area_feedback,
         "mfi_details": {
             "employment_sector": sec,
