@@ -302,8 +302,8 @@ def _build_features(salary, sector, reason, total_loans, active_loans,
 
 
 AUTO_DECISION_REJECTION_THRESHOLD = 35.0  # anomaly score that triggers rejection for non-high labels
-ANOMALY_REJECTION_FRONTEND_SCORE_MIN = random.randrange(80.0,88.0)
-ANOMALY_REJECTION_FRONTEND_SCORE_MAX = random.randrange(88.0,98.0)
+ANOMALY_REJECTION_FRONTEND_SCORE_MIN = float(random.randrange(80,88))
+ANOMALY_REJECTION_FRONTEND_SCORE_MAX = float(random.randrange(88,98))
 PAYOUT_DETAILS_MARKER = "\n\n[PAYOUT_DETAILS]"
 
 
