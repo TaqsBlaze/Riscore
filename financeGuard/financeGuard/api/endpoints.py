@@ -1857,22 +1857,6 @@ async def assess():
                         outstanding_balance     = db_outstanding_balance,
                     )
                 )
-            else:
-                bid = "B" + uuid.uuid4().hex[:6].upper()
-                session.add(Borrower(
-                    id=bid, full_name=full_name, first_name=first_name, last_name=last_name,
-                    salary=salary, employment_sector=sec, job_title=job,
-                    total_prev_loans=db_total_loans, active_loans=db_active_loans, outstanding_balance=db_outstanding_balance,
-                    avg_loan_amount=am, common_loan_reason=loan_reason, return_rate=rr,
-                    days_past_due=dp, mfi_diversity_score=ms,
-                    risk_score=score, risk_label=label,
-                    risk_probability_high=probs.get("High",   0),
-                    risk_probability_medium=probs.get("Medium", 0),
-                    risk_probability_low=probs.get("Low",    0),
-                    loan_amount=loan_amount,
-                    data_source=data_source, created_at=now,
-                ))
-
             recent_application_window = recent_assessment_count + 1
             anomaly_eval = evaluate_application_anomalies(
                 salary=salary,
@@ -1925,15 +1909,49 @@ async def assess():
             )
             frontend_risk_label = "High" if frontend_risk_score != round(float(score), 1) else label
 
-            if frontend_risk_score != score:
+            # Generate borrower ID before creating/updating the record
+            if not existing_borrower_id:
+                bid = "B" + uuid.uuid4().hex[:6].upper()
+            
+            # Create/update borrower with FINAL score AFTER anomaly calculations
+            if existing_borrower_id:
                 await session.execute(
                     update(Borrower)
-                    .where(Borrower.id == bid)
+                    .where(Borrower.id == existing_borrower_id)
                     .values(
+                        salary=salary,
+                        employment_sector=sec,
+                        job_title=job,
+                        total_prev_loans=db_total_loans,
+                        active_loans=db_active_loans,
+                        outstanding_balance=db_outstanding_balance,
+                        avg_loan_amount=am,
+                        common_loan_reason=loan_reason,
+                        return_rate=rr,
+                        days_past_due=dp,
+                        mfi_diversity_score=ms,
                         risk_score=frontend_risk_score,
                         risk_label=frontend_risk_label,
+                        risk_probability_high=probs.get("High",   0),
+                        risk_probability_medium=probs.get("Medium", 0),
+                        risk_probability_low=probs.get("Low",    0),
+                        loan_amount=loan_amount,
                     )
                 )
+            else:
+                session.add(Borrower(
+                    id=bid, full_name=full_name, first_name=first_name, last_name=last_name,
+                    salary=salary, employment_sector=sec, job_title=job,
+                    total_prev_loans=db_total_loans, active_loans=db_active_loans, outstanding_balance=db_outstanding_balance,
+                    avg_loan_amount=am, common_loan_reason=loan_reason, return_rate=rr,
+                    days_past_due=dp, mfi_diversity_score=ms,
+                    risk_score=frontend_risk_score, risk_label=frontend_risk_label,
+                    risk_probability_high=probs.get("High",   0),
+                    risk_probability_medium=probs.get("Medium", 0),
+                    risk_probability_low=probs.get("Low",    0),
+                    loan_amount=loan_amount,
+                    data_source=data_source, created_at=now,
+                ))
 
             tracking_number = _generate_tracking_number() if decision_status == "approved" else None
             session.add(Transaction(
@@ -2044,4 +2062,4 @@ def health():
 @app.route('/protected')
 @token_required
 def protected(current_user):
-    return jsonify({'message': 'This is a protected route!', 'user': current_user})
+    return jsonify({'message': 'This is a protected route!', 'user': current_user})\
