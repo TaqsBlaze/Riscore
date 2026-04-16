@@ -2062,4 +2062,4 @@ def health():
 @app.route('/protected')
 @token_required
 def protected(current_user):
-    return jsonify({'message': 'This is a protected route!', 'user': current_user})\
+    return jsonify({'message': 'This is a protected route!', 'user': current_user})
